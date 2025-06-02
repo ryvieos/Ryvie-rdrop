@@ -17,7 +17,7 @@ export default function WebViewScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
 
-  // 1. Demander la permission d'accéder à la galerie
+  // Demander la permission d'accéder à la galerie
   useEffect(() => {
     (async () => {
       const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -26,7 +26,7 @@ export default function WebViewScreen() {
     })();
   }, []);
 
-  // 2. Créer le dossier de téléchargements s'il n'existe pas
+  // Créer le dossier de téléchargements s'il n'existe pas
   useEffect(() => {
     async function ensureDownloadsFolder() {
       try {
@@ -44,8 +44,9 @@ export default function WebViewScreen() {
     ensureDownloadsFolder();
   }, []);
 
-  // 3. Fonction pour télécharger et enregistrer un média (image ou vidéo)
-  const downloadAndSaveMedia = async (mediaUrl: string, mimeType: string = '') => {
+  // Fonction pour télécharger et enregistrer un média (image ou vidéo)
+  // → NE PLUS afficher de Toast/Alert à chaque appel ! Retourne simplement { success: boolean }
+  const downloadAndSaveMedia = async (mediaUrl: string, mimeType: string = ''): Promise<{ success: boolean }> => {
     try {
       console.log('Début du téléchargement:', mediaUrl);
       console.log('Type MIME:', mimeType);
@@ -97,7 +98,6 @@ export default function WebViewScreen() {
 
       // Si l'URL est en base64 (data:…), on l’écrit directement
       if (mediaUrl.startsWith('data:')) {
-        // On récupère juste la partie base64 après la virgule
         const [, base64Data] = mediaUrl.split(',');
         await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: FileSystem.EncodingType.Base64 });
         console.log('Ecriture base64 terminée:', fileUri);
@@ -106,73 +106,51 @@ export default function WebViewScreen() {
         const downloadResult = await FileSystem.downloadAsync(mediaUrl, fileUri);
         console.log('Résultat téléchargement:', JSON.stringify(downloadResult));
         if (downloadResult.status !== 200) {
-          Alert.alert('Erreur', `Téléchargement échoué avec le statut ${downloadResult.status}`);
+          console.warn(`Téléchargement échoué avec le statut ${downloadResult.status}`);
           return { success: false };
         }
       }
 
-      // Afficher une confirmation
-      const mediaType = isVideo ? 'Vidéo' : 'Image';
-      if (Platform.OS === 'android') {
-        ToastAndroid.show(`${mediaType} téléchargé(e) avec succès`, ToastAndroid.LONG);
-      } else {
-        Alert.alert(
-          `${mediaType} téléchargé(e)`,
-          `Le/La ${mediaType.toLowerCase()} a été enregistré(e) dans l'application. Vous pouvez la voir dans l'onglet "Téléchargements".`,
-          [{ text: 'OK', style: 'default' }]
-        );
-      }
+      // Ici, on NE FAIT PLUS de ToastAndroid.show ni d'Alert.alert.
 
-      return { success: true, fileUri, isVideo, fileName: uniqueFilename };
+      return { success: true };
     } catch (error) {
       console.error('Erreur lors du téléchargement:', error);
-      Alert.alert('Erreur', `Impossible de télécharger le média: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
       return { success: false };
     }
   };
 
-  // 4. JavaScript à injecter dans la WebView pour intercepter plusieurs blobs
-  //    - On intercepte les clics sur <a href="blob:…">
-  //    - Pour chaque blob, on fait fetch → blob → FileReader(base64), on ajoute l'objet { url, mimeType } à window._blobQueue
-  //    - Après 500 ms sans nouveau blob, on transmet tout le tableau à React Native en un seul message { type: 'batchDownload', items: [...] }
+  // JavaScript injecté dans la WebView pour intercepter plusieurs blobs
   const injectedJavaScript = `
     (function() {
-      // Tableau global dans la page Web pour stocker temporairement les blobs
       window._blobQueue = [];
-
-      // Timer pour détecter la fin d'une série de blobs
       let _batchTimer = null;
 
-      // Fonction qui, une fois appelée, envoie le conteneur complet à React Native
       function flushBlobQueue() {
         if (window._blobQueue.length === 0) return;
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'batchDownload',
           items: window._blobQueue
         }));
-        // On vide le tableau pour la prochaine série
         window._blobQueue = [];
       }
 
-      // Pour chaque nouveau blob détecté, on remet le timer à zéro
       function scheduleFlush() {
         if (_batchTimer) clearTimeout(_batchTimer);
         _batchTimer = setTimeout(function() {
           flushBlobQueue();
           _batchTimer = null;
-        }, 500); // 500 ms après le dernier blob, on envoie
+        }, 500);
       }
 
-      // Fonction pour traiter un lien <a href="blob:…">
       function handleBlobLink(blobUrl) {
         fetch(blobUrl)
           .then(response => response.blob())
           .then(blob => {
             const reader = new FileReader();
             reader.onloadend = function() {
-              const base64data = reader.result; // data:xxx;base64,AAAA…
+              const base64data = reader.result;
               const isVideo = blob.type.startsWith('video/');
-              // On ajoute l'entrée au tableau
               window._blobQueue.push({
                 url: base64data,
                 mimeType: blob.type || (isVideo ? 'video/mp4' : 'image/jpeg')
@@ -186,7 +164,6 @@ export default function WebViewScreen() {
           });
       }
 
-      // On écoute tous les clics sur la page pour intercepter les <a href="blob:…">
       document.addEventListener('click', function(e) {
         const el = e.target.closest('a');
         if (el && typeof el.href === 'string' && el.href.startsWith('blob:')) {
@@ -194,37 +171,44 @@ export default function WebViewScreen() {
           handleBlobLink(el.href);
         }
       });
-
-      // Éventuellement, si la page déclenche d'autres manières (fetch automatique),
-      // on pourrait aussi surcharger window.fetch ou XMLHttpRequest. Mais pour l'instant,
-      // on se concentre sur le clic sur lien <a href="blob:..."> comme point d'entrée.
     })();
   `;
 
-  // 5. Handler pour recevoir le “batchDownload” et traiter chaque media
+  // Handler pour recevoir le “batchDownload” et traiter chaque media
   const handleOnMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      console.log('Message reçu de la WebView:', data.type);
-
-      if (data.type === 'error') {
-        console.error('Erreur dans WebView:', data.message);
-        Alert.alert('Erreur', data.message);
-        return;
-      }
 
       if (data.type === 'batchDownload' && Array.isArray(data.items)) {
         console.log(`Réception de ${data.items.length} blobs en batch.`);
-        // Pour chaque entrée, on utilise downloadAndSaveMedia (qui gère base64 ou URL normal)
+        let successCount = 0;
+
+        // Pour chaque entrée, on télécharge sans afficher d'alerte individuelle
         for (const item of data.items) {
           const mediaUrl: string = item.url;
           const mimeType: string = item.mimeType || '';
-          await downloadAndSaveMedia(mediaUrl, mimeType);
+          const result = await downloadAndSaveMedia(mediaUrl, mimeType);
+          if (result.success) {
+            successCount++;
+          }
+        }
+
+        // À la fin de la boucle, on affiche UNE UNIQUE notification
+        if (successCount > 0) {
+          const message = `${successCount} fichier${successCount > 1 ? 's' : ''} téléchargé${successCount > 1 ? 's' : ''} avec succès !`;
+          if (Platform.OS === 'android') {
+            ToastAndroid.show(message, ToastAndroid.LONG);
+          } else {
+            Alert.alert('Téléchargement terminé', message);
+          }
+        } else {
+          // Au cas où aucun media n'aura pu être traité
+          Alert.alert('Aucun téléchargement', `Aucun média n'a été téléchargé.`);
         }
       }
     } catch (error) {
       console.error('Erreur lors du traitement du message:', error);
-      Alert.alert('Erreur', `Erreur lors du traitement: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+      Alert.alert('Erreur', `Erreur lors du traitement : ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
     }
   };
 
@@ -232,8 +216,7 @@ export default function WebViewScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Ryvie Web',
-          headerShown: true,
+          headerShown: false,
         }}
       />
       {isLoading && (
@@ -258,11 +241,7 @@ export default function WebViewScreen() {
         originWhitelist={['*']}
         injectedJavaScript={injectedJavaScript}
         onMessage={handleOnMessage}
-        onShouldStartLoadWithRequest={(request) => {
-          // On garde un comportement standard pour les URLs classiques
-          // (ni interception ni modification) 
-          return true;
-        }}
+        onShouldStartLoadWithRequest={() => true}
       />
     </View>
   );

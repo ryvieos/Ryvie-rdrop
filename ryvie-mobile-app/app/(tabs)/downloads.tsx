@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, Image, FlatList, TouchableOpacity, Alert, ActivityIndicator, Share, Platform, ToastAndroid } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
+import { useCallback } from 'react';
 
 // Dossier où les images téléchargées seront stockées
 const DOWNLOADS_DIRECTORY = `${FileSystem.documentDirectory}downloads/`;
@@ -26,6 +27,7 @@ export default function DownloadsScreen() {
   const [selectedMedias, setSelectedMedias] = useState<DownloadedMedia[]>([]);
   const colorScheme = useColorScheme();
 
+  // Configurer le dossier de téléchargements au démarrage
   useEffect(() => {
     async function setupDownloadsFolder() {
       try {
@@ -34,17 +36,25 @@ export default function DownloadsScreen() {
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(DOWNLOADS_DIRECTORY, { intermediates: true });
         }
-        
-        // Charger les médias (images et vidéos)
-        loadMedias();
       } catch (error) {
         console.error("Erreur lors de la vérification du dossier de téléchargements:", error);
-        setLoading(false);
       }
     }
     
     setupDownloadsFolder();
   }, []);
+  
+  // Recharger les médias chaque fois que l'écran devient actif
+  useFocusEffect(
+    useCallback(() => {
+      console.log('Downloads screen focused - reloading media');
+      loadMedias();
+      
+      return () => {
+        // Fonction de nettoyage (optionnelle)
+      };
+    }, [])
+  );
 
   // Charger la liste des médias téléchargés (images et vidéos)
   const loadMedias = async () => {
