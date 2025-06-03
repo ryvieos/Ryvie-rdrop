@@ -44,16 +44,13 @@ export default function WebViewScreen() {
 
   /**
    * Écrit un média (image ou vidéo) dans DOWNLOADS_DIRECTORY
-   * et renvoie l'URI du fichier local, sans tenter de l'enregistrer
-   * dans la Pellicule. Ce qui garantit que TOUTES les ressources
-   * finissent par se trouver dans /downloads.
+   * et renvoie l'URI du fichier local.
    */
   const writeMediaToDownloads = async (
     mediaUrl: string,
     mimeType: string = ''
   ): Promise<{ uri: string | null; success: boolean }> => {
     try {
-      console.log('Début écriture locale :', mediaUrl);
       console.log('Type MIME :', mimeType);
 
       // Déterminer si c'est une vidéo ou une image
@@ -63,10 +60,10 @@ export default function WebViewScreen() {
       }
 
       // Déterminer l'extension du fichier
-      let fileExtension = 'jpg'; // Valeur par défaut
+      let fileExtension = 'jpg';
       if (mediaUrl.includes('.')) {
-        const urlParts = mediaUrl.split('.');
-        const potentialExt = urlParts[urlParts.length - 1].split(/[?#]/)[0].toLowerCase();
+        const parts = mediaUrl.split('.');
+        const potentialExt = parts[parts.length - 1].split(/[?#]/)[0].toLowerCase();
         const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
         const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'];
 
@@ -78,14 +75,13 @@ export default function WebViewScreen() {
           isVideo = true;
         }
       } else if (mimeType) {
-        if (mimeType.includes('jpeg') || mimeType.includes('jpg')) fileExtension = 'jpg';
+        if (mimeType.includes('mp4')) fileExtension = 'mp4', isVideo = true;
+        else if (mimeType.includes('mov') || mimeType.includes('quicktime')) fileExtension = 'mov', isVideo = true;
+        else if (mimeType.includes('avi')) fileExtension = 'avi', isVideo = true;
+        else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) fileExtension = 'jpg';
         else if (mimeType.includes('png')) fileExtension = 'png';
         else if (mimeType.includes('gif')) fileExtension = 'gif';
         else if (mimeType.includes('webp')) fileExtension = 'webp';
-        else if (mimeType.includes('mp4')) fileExtension = 'mp4';
-        else if (mimeType.includes('webm')) fileExtension = 'webm';
-        else if (mimeType.includes('mov')) fileExtension = 'mov';
-        else if (mimeType.includes('avi')) fileExtension = 'avi';
       }
 
       // Nom de fichier unique
@@ -93,18 +89,16 @@ export default function WebViewScreen() {
       const uniqueFilename = `${prefix}_${Date.now()}.${fileExtension}`;
       const fileUri = `${DOWNLOADS_DIRECTORY}${uniqueFilename}`;
 
-      // a) Écriture locale dans "downloads/"
+      // Écriture locale dans "downloads/"
       if (mediaUrl.startsWith('data:')) {
-        // Cas data:URL (base64)
         const [, base64Data] = mediaUrl.split(',');
         await FileSystem.writeAsStringAsync(fileUri, base64Data, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        console.log('Écriture base64 terminée :', fileUri);
+        console.log('Écriture base64 terminée');
       } else {
-        // Cas URL HTTP/HTTPS
         const downloadResult = await FileSystem.downloadAsync(mediaUrl, fileUri);
-        console.log('Résultat téléchargement :', JSON.stringify(downloadResult));
+        console.log('Téléchargement terminé, statut:', downloadResult.status);
         if (downloadResult.status !== 200) {
           console.warn(`Échec téléchargement (status ${downloadResult.status})`);
           return { uri: null, success: false };
@@ -119,17 +113,19 @@ export default function WebViewScreen() {
   };
 
   /**
-   * Sauvegarde un fichier déjà existant (URI) dans la Pellicule.
-   * Renvoie true en cas de succès, false sinon.
+   * Sauvegarde un fichier local (URI) dans la Pellicule iOS/Android,
+   * en forçant la date de création à "now" via saveToLibraryAsync.
    */
   const saveUriToCameraRoll = async (fileUri: string): Promise<boolean> => {
     if (!mediaPermission) {
-      console.warn("Permission MediaLibrary non accordée, impossible d'enregistrer dans la Pellicule.");
+      console.warn("Permission MediaLibrary non accordée, impossible d'enregistrer.");
       return false;
     }
     try {
+      // On utilise toujours saveToLibraryAsync, qui place l'élément
+      // dans la photothèque avec la date de création actuelle.
       await MediaLibrary.saveToLibraryAsync(fileUri);
-      console.log('Fichier enregistré dans la pellicule :', fileUri);
+      console.log('Fichier enregistré dans la pellicule');
       return true;
     } catch (saveErr) {
       console.error('Erreur saveToLibraryAsync :', saveErr);
@@ -138,8 +134,7 @@ export default function WebViewScreen() {
   };
 
   /**
-   * Affiche une boîte de dialogue de confirmation avant d'enregistrer
-   * N fichiers dans la Pellicule. Renvoie true si l'utilisateur confirme, false sinon.
+   * Confirmation utilisateur avant d'enregistrer N fichiers dans la Pellicule.
    */
   const confirmSaveToPellicule = (count: number): Promise<boolean> => {
     return new Promise(resolve => {
@@ -147,15 +142,8 @@ export default function WebViewScreen() {
         'Confirmation',
         `Voulez-vous enregistrer ${count} fichier${count > 1 ? 's' : ''} dans la Pellicule ?`,
         [
-          {
-            text: 'Annuler',
-            style: 'cancel',
-            onPress: () => resolve(false),
-          },
-          {
-            text: 'Enregistrer',
-            onPress: () => resolve(true),
-          },
+          { text: 'Annuler', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Enregistrer', onPress: () => resolve(true) },
         ],
         { cancelable: true }
       );
@@ -224,7 +212,7 @@ export default function WebViewScreen() {
       if (data.type === 'batchDownload' && Array.isArray(data.items)) {
         console.log(`Réception de ${data.items.length} blobs en batch.`);
 
-        // 4.a. Écrire TOUTES les ressources dans /downloads/ (sans confirmation)
+        // 4.a. Écrire TOUTES les ressources dans /downloads/
         const fileUris: string[] = [];
         let writeFailures = 0;
 
@@ -239,10 +227,9 @@ export default function WebViewScreen() {
           }
         }
 
-        // 4.b. Si certains fichiers n'ont pas pu être écrits en local,
-        //     on peut prévenir l'utilisateur immédiatement
+        // 4.b. Si certains fichiers n'ont pas pu être écrits en local
         if (writeFailures > 0) {
-          const failMsg = `${writeFailures} échec${writeFailures > 1 ? 's' : ''} lors de l’écriture locale dans /downloads/.`;
+          const failMsg = `${writeFailures} échec${writeFailures > 1 ? 's' : ''} lors de l’écriture locale.`;
           if (Platform.OS === 'android') {
             ToastAndroid.show(failMsg, ToastAndroid.LONG);
           } else {
@@ -259,8 +246,7 @@ export default function WebViewScreen() {
 
         const userConfirmed = await confirmSaveToPellicule(totalToSave);
         if (!userConfirmed) {
-          // L'utilisateur a refusé : on ne fait rien d'autre.
-          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistr${totalToSave > 1 ? 's' : ''} uniquement dans “Téléchargements”`;
+          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistré${totalToSave > 1 ? 's' : ''} uniquement dans “Téléchargements”`;
           if (Platform.OS === 'android') {
             ToastAndroid.show(message, ToastAndroid.LONG);
           } else {
@@ -269,7 +255,7 @@ export default function WebViewScreen() {
           return;
         }
 
-        // 4.d. L'utilisateur a confirmé : on enregistre chaque URI dans la Pellicule
+        // 4.d. Enregistrer chaque URI dans la Pellicule
         let successCount = 0;
         let failureCount = 0;
 
@@ -292,7 +278,7 @@ export default function WebViewScreen() {
           }
         }
         if (failureCount > 0) {
-          const failMsg2 = `${failureCount} échec${failureCount > 1 ? 's' : ''} pour la Pellicule.`;
+          const failMsg2 = `${failureCount} échec${failureCount > 1 ? 's' : ''} lors de l’enregistrement dans la Pellicule.`;
           if (Platform.OS === 'android') {
             ToastAndroid.show(failMsg2, ToastAndroid.LONG);
           } else {
