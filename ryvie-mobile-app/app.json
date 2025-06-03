@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "ryvie-mobile-app",
-    "slug": "ryvie-mobile-app",
+    "name": "rDrop",
+    "slug": "rDrop",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "ryviemobileapp",
+    "icon": "./assets/images/apple-touch-icon.png",
+    "scheme": "rdrop",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

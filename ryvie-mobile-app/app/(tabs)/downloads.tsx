@@ -1,413 +1,326 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, Image, FlatList, TouchableOpacity, Alert, ActivityIndicator, Share, Platform, ToastAndroid } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  Image,
+  FlatList,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Share,
+  Platform,
+  ToastAndroid
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
-import { useCallback } from 'react';
 
 // Dossier où les images téléchargées seront stockées
 const DOWNLOADS_DIRECTORY = `${FileSystem.documentDirectory}downloads/`;
 
-// Définir l'interface pour les médias (images et vidéos)
+// Type pour media (image ou vidéo)
 interface DownloadedMedia {
   uri: string;
   fileName: string;
   date: Date;
-  isVideo: boolean; // true pour les vidéos, false pour les images
-  type: string; // type MIME ou extension
+  isVideo: boolean;
+  type: string;
 }
 
 export default function DownloadsScreen() {
   const [medias, setMedias] = useState<DownloadedMedia[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectionMode, setSelectionMode] = useState(false);
+  // Mode sélection activé par défaut
+  const [selectionMode, setSelectionMode] = useState(true);
   const [selectedMedias, setSelectedMedias] = useState<DownloadedMedia[]>([]);
   const colorScheme = useColorScheme();
 
-  // Configurer le dossier de téléchargements au démarrage
+  // 1. Création du dossier de téléchargements si nécessaire
   useEffect(() => {
-    async function setupDownloadsFolder() {
+    (async () => {
       try {
-        // Vérifier si le dossier de téléchargements existe
         const dirInfo = await FileSystem.getInfoAsync(DOWNLOADS_DIRECTORY);
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(DOWNLOADS_DIRECTORY, { intermediates: true });
         }
-      } catch (error) {
-        console.error("Erreur lors de la vérification du dossier de téléchargements:", error);
+      } catch (err) {
+        console.error("Erreur dossier downloads :", err);
       }
-    }
-    
-    setupDownloadsFolder();
+    })();
   }, []);
-  
-  // Recharger les médias chaque fois que l'écran devient actif
+
+  // 2. Recharge la liste des fichiers à chaque focus de l'écran
   useFocusEffect(
     useCallback(() => {
-      console.log('Downloads screen focused - reloading media');
       loadMedias();
-      
-      return () => {
-        // Fonction de nettoyage (optionnelle)
-      };
+      return () => {};
     }, [])
   );
 
-  // Charger la liste des médias téléchargés (images et vidéos)
+  // 3. Charge et trie les médias
   const loadMedias = async () => {
     try {
       setLoading(true);
-      
-      // Lire le contenu du répertoire de téléchargements
       const files = await FileSystem.readDirectoryAsync(DOWNLOADS_DIRECTORY);
-      
-      // Déterminer le type de fichier en fonction de l'extension
       const mediaPromises = files.map(async (fileName) => {
         const ext = fileName.split('.').pop()?.toLowerCase() || '';
-        const fileUri = `${DOWNLOADS_DIRECTORY}${fileName}`;
+        const fileUri = DOWNLOADS_DIRECTORY + fileName;
         const fileInfo = await FileSystem.getInfoAsync(fileUri);
-        
-        // Déterminer si c'est une vidéo ou une image
-        const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
-        const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'];
-        
-        // Déterminer si c'est une vidéo ou une image basé sur le préfixe du nom de fichier ou l'extension
-        const isVideo = videoExtensions.includes(ext) || fileName.startsWith('video_');
-        
+        const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'];
+        const isVideo = videoExts.includes(ext) || fileName.startsWith('video_');
         return {
           uri: fileUri,
           fileName,
-          date: new Date(fileInfo.modificationTime * 1000), // Convertir le timestamp en Date
+          date: new Date(fileInfo.modificationTime * 1000),
           isVideo,
           type: ext
         };
       });
-      
-      // Attendre que toutes les promesses soient résolues
       const mediaData = await Promise.all(mediaPromises);
-      
-      // Trier les médias par date (plus récents en premier)
-      const sortedMedias = mediaData.sort((a, b) => b.date.getTime() - a.date.getTime());
-      
-      setMedias(sortedMedias);
-    } catch (error) {
-      console.error("Erreur lors du chargement des médias:", error);
+      mediaData.sort((a, b) => b.date.getTime() - a.date.getTime());
+      setMedias(mediaData);
+    } catch (err) {
+      console.error("Erreur chargement médias :", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Sauvegarder un média dans la galerie
+  // 4. Enregistrer un unique média dans la galerie
   const saveToGallery = async (mediaUri: string, isVideo: boolean) => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== 'granted') {
-        const mediaType = isVideo ? "vidéo" : "image";
-        Alert.alert("Permission refusée", `Nous avons besoin de votre permission pour sauvegarder la ${mediaType} dans la galerie.`);
+        const type = isVideo ? 'vidéo' : 'image';
+        Alert.alert("Permission refusée", `Impossible de sauvegarder la ${type} sans autorisation.`);
         return;
       }
-      
       await MediaLibrary.createAssetAsync(mediaUri);
-      
-      const mediaType = isVideo ? "Vidéo" : "Image";
-      if (Platform.OS === 'android') {
-        ToastAndroid.show(`${mediaType} sauvegardée dans la galerie`, ToastAndroid.LONG);
-      } else {
-        Alert.alert("Succès", `${mediaType} sauvegardée dans la galerie.`);
-      }
-    } catch (error) {
-      const mediaType = isVideo ? "vidéo" : "image";
-      console.error(`Erreur lors de la sauvegarde de la ${mediaType} dans la galerie:`, error);
-      Alert.alert("Erreur", `Impossible de sauvegarder la ${mediaType} dans la galerie.`);
+      const label = isVideo ? 'Vidéo' : 'Image';
+      Platform.OS === 'android'
+        ? ToastAndroid.show(`${label} sauvegardée`, ToastAndroid.LONG)
+        : Alert.alert("Succès", `${label} sauvegardée`);
+    } catch (err) {
+      console.error("Erreur saveToGallery:", err);
+      Alert.alert("Erreur", "Échec de l’enregistrement dans la galerie.");
     }
   };
 
-  // Supprimer un média
+  // 5. Supprimer un unique média
   const deleteMedia = async (mediaUri: string, fileName: string, isVideo: boolean) => {
-    try {
-      const mediaType = isVideo ? "vidéo" : "image";
-      Alert.alert(
-        "Confirmation",
-        `Êtes-vous sûr de vouloir supprimer cette ${mediaType} ?`,
-        [
-          { text: "Annuler", style: "cancel" },
-          {
-            text: "Supprimer", 
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await FileSystem.deleteAsync(mediaUri, { idempotent: true });
-                setMedias(medias.filter(media => media.fileName !== fileName));
-                
-                if (Platform.OS === 'android') {
-                  ToastAndroid.show(`${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} supprimée`, ToastAndroid.LONG);
-                } else {
-                  Alert.alert("Succès", `${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} supprimée avec succès.`);
-                }
-              } catch (error) {
-                console.error(`Erreur lors de la suppression de la ${mediaType}:`, error);
-                Alert.alert("Erreur", `Impossible de supprimer la ${mediaType}.`);
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error("Erreur lors de la demande de suppression:", error);
-      Alert.alert("Erreur", "Une erreur est survenue lors de la suppression.");
-    }
-  };
-
-  // Partager un média
-  const shareMedia = async (mediaUri: string, isVideo: boolean) => {
-    try {
-      const mediaType = isVideo ? "Vidéo" : "Image";
-      await Share.share({
-        url: mediaUri,
-        message: `${mediaType} partagée depuis Ryvie`
-      });
-    } catch (error) {
-      console.error("Erreur lors du partage:", error);
-    }
-  };
-
-  // Partager plusieurs médias
-  const shareMultipleMedias = async () => {
-    if (selectedMedias.length === 0) return;
-    
-    try {
-      if (selectedMedias.length === 1) {
-        await shareMedia(selectedMedias[0].uri, selectedMedias[0].isVideo);
-      } else {
-        // Sur iOS, on peut partager plusieurs fichiers
-        if (Platform.OS === 'ios') {
-          // Compter le nombre de vidéos et d'images
-          const videoCount = selectedMedias.filter(media => media.isVideo).length;
-          const imageCount = selectedMedias.length - videoCount;
-          
-          let messageText = '';
-          if (videoCount > 0 && imageCount > 0) {
-            messageText = `${imageCount} image(s) et ${videoCount} vidéo(s) partagées depuis Ryvie`;
-          } else if (videoCount > 0) {
-            messageText = `${videoCount} vidéo(s) partagée(s) depuis Ryvie`;
-          } else {
-            messageText = `${imageCount} image(s) partagée(s) depuis Ryvie`;
-          }
-          
-          // Type compatible avec iOS uniquement
-          const shareOptions = {
-            message: messageText,
-            url: selectedMedias[0].uri, // Fallback pour la compatibilité
-            urls: selectedMedias.map(media => media.uri) // iOS uniquement
-          };
-          // @ts-ignore - 'urls' est valide sur iOS mais TypeScript ne le connaît pas
-          await Share.share(shareOptions);
-        } else {
-          // Sur Android, on partage seulement le premier média
-          await shareMedia(selectedMedias[0].uri, selectedMedias[0].isVideo);
-          if (selectedMedias.length > 1) {
-            ToastAndroid.show('Seul le premier média a été partagé', ToastAndroid.LONG);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Erreur lors du partage multiple:", error);
-      Alert.alert("Erreur", "Impossible de partager les médias sélectionnés.");
-    }
-  };
-
-  // Sauvegarder plusieurs médias dans la galerie
-  const saveMultipleToGallery = async () => {
-    if (selectedMedias.length === 0) return;
-
-    try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert("Permission refusée", "Nous avons besoin de votre permission pour sauvegarder les médias dans la galerie.");
-        return;
-      }
-
-      let successCount = 0;
-      let imageCount = 0;
-      let videoCount = 0;
-      
-      for (const media of selectedMedias) {
-        try {
-          await MediaLibrary.createAssetAsync(media.uri);
-          successCount++;
-          if (media.isVideo) {
-            videoCount++;
-          } else {
-            imageCount++;
-          }
-        } catch (e) {
-          console.error(`Erreur lors de la sauvegarde de ${media.fileName}:`, e);
-        }
-      }
-
-      if (successCount > 0) {
-        let message = '';
-        if (imageCount > 0 && videoCount > 0) {
-          message = `${imageCount} image(s) et ${videoCount} vidéo(s) sauvegardée(s) dans la galerie`;
-        } else if (videoCount > 0) {
-          message = `${videoCount} vidéo(s) sauvegardée(s) dans la galerie`;
-        } else {
-          message = `${imageCount} image(s) sauvegardée(s) dans la galerie`;
-        }
-        
-        if (Platform.OS === 'android') {
-          ToastAndroid.show(message, ToastAndroid.LONG);
-        } else {
-          Alert.alert("Succès", message);
-        }
-        exitSelectionMode();
-      } else {
-        Alert.alert("Erreur", "Impossible de sauvegarder les médias dans la galerie.");
-      }
-    } catch (error) {
-      console.error("Erreur lors de la sauvegarde multiple:", error);
-      Alert.alert("Erreur", "Impossible de sauvegarder les médias dans la galerie.");
-    }
-  };
-
-  // Supprimer plusieurs médias
-  const deleteMultipleMedias = async () => {
-    if (selectedMedias.length === 0) return;
-
-    // Compter le nombre de vidéos et d'images
-    const videoCount = selectedMedias.filter(media => media.isVideo).length;
-    const imageCount = selectedMedias.length - videoCount;
-    
-    let messageText = '';
-    if (videoCount > 0 && imageCount > 0) {
-      messageText = `${imageCount} image(s) et ${videoCount} vidéo(s)`;
-    } else if (videoCount > 0) {
-      messageText = `${videoCount} vidéo(s)`;
-    } else {
-      messageText = `${imageCount} image(s)`;
-    }
-
+    const type = isVideo ? 'vidéo' : 'image';
     Alert.alert(
-      "Confirmation",
-      `Êtes-vous sûr de vouloir supprimer ${messageText} ?`,
+      "Supprimer",
+      `Supprimer cette ${type} ?`,
       [
         { text: "Annuler", style: "cancel" },
-        { 
-          text: "Supprimer", 
+        {
+          text: "Supprimer",
           style: "destructive",
           onPress: async () => {
             try {
-              let deletedCount = 0;
-              const fileNamesToDelete = selectedMedias.map(media => media.fileName);
-              
-              for (const media of selectedMedias) {
-                try {
-                  await FileSystem.deleteAsync(media.uri, { idempotent: true });
-                  deletedCount++;
-                } catch (e) {
-                  console.error(`Erreur lors de la suppression de ${media.fileName}:`, e);
-                }
-              }
-              
-              if (deletedCount > 0) {
-                // Mettre à jour la liste de médias
-                setMedias(medias.filter(media => !fileNamesToDelete.includes(media.fileName)));
-                
-                let message = '';
-                if (Platform.OS === 'android') {
-                  ToastAndroid.show(`${deletedCount} média(s) supprimé(s)`, ToastAndroid.LONG);
-                } else {
-                  Alert.alert("Succès", `${deletedCount} média(s) supprimé(s).`);
-                }
-                exitSelectionMode();
-              }
-            } catch (error) {
-              console.error("Erreur lors de la suppression multiple:", error);
-              Alert.alert("Erreur", "Impossible de supprimer certains médias.");
+              await FileSystem.deleteAsync(mediaUri, { idempotent: true });
+              setMedias(medias.filter(m => m.fileName !== fileName));
+              Platform.OS === 'android'
+                ? ToastAndroid.show(`${type.charAt(0).toUpperCase() + type.slice(1)} supprimée`, ToastAndroid.LONG)
+                : Alert.alert("Succès", `${type.charAt(0).toUpperCase() + type.slice(1)} supprimée`);
+            } catch (err) {
+              console.error("Erreur deleteMedia :", err);
+              Alert.alert("Erreur", `Impossible de supprimer la ${type}.`);
             }
-          } 
+          }
         }
       ]
     );
   };
 
-  // Activer le mode sélection
-  const toggleSelectionMode = () => {
-    if (selectionMode) {
-      exitSelectionMode();
-    } else {
-      setSelectionMode(true);
+  // 6. Partager un unique média
+  const shareMedia = async (mediaUri: string, isVideo: boolean) => {
+    try {
+      const label = isVideo ? 'Vidéo' : 'Image';
+      await Share.share({ url: mediaUri, message: `${label} partagée depuis Ryvie` });
+    } catch (err) {
+      console.error("Erreur shareMedia:", err);
     }
   };
 
-  // Désactiver le mode sélection
+  // 7. Partager plusieurs médias
+  const shareMultipleMedias = async () => {
+    if (selectedMedias.length === 0) return;
+    try {
+      if (selectedMedias.length === 1) {
+        await shareMedia(selectedMedias[0].uri, selectedMedias[0].isVideo);
+      } else if (Platform.OS === 'ios') {
+        const videoCount = selectedMedias.filter(m => m.isVideo).length;
+        const imageCount = selectedMedias.length - videoCount;
+        let msg = '';
+        if (videoCount > 0 && imageCount > 0) {
+          msg = `${imageCount} image(s) et ${videoCount} vidéo(s) partagées depuis Ryvie`;
+        } else if (videoCount > 0) {
+          msg = `${videoCount} vidéo(s) partagée(s) depuis Ryvie`;
+        } else {
+          msg = `${imageCount} image(s) partagée(s) depuis Ryvie`;
+        }
+        // @ts-ignore
+        await Share.share({ message: msg, url: selectedMedias[0].uri, urls: selectedMedias.map(m => m.uri) });
+      } else {
+        await shareMedia(selectedMedias[0].uri, selectedMedias[0].isVideo);
+        if (selectedMedias.length > 1) {
+          ToastAndroid.show('Seul le premier média a été partagé', ToastAndroid.LONG);
+        }
+      }
+    } catch (err) {
+      console.error("Erreur shareMultipleMedias:", err);
+      Alert.alert("Erreur", "Échec du partage multiple.");
+    }
+  };
+
+  // 8. Sauvegarder plusieurs médias
+  const saveMultipleToGallery = async () => {
+    if (selectedMedias.length === 0) return;
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert("Permission refusée", "Impossible sans accès à la galerie.");
+        return;
+      }
+      let successCount = 0, imageCount = 0, videoCount = 0;
+      for (const media of selectedMedias) {
+        try {
+          await MediaLibrary.createAssetAsync(media.uri);
+          successCount++;
+          media.isVideo ? videoCount++ : imageCount++;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (successCount > 0) {
+        let msg = '';
+        if (imageCount > 0 && videoCount > 0) {
+          msg = `${imageCount} image(s) et ${videoCount} vidéo(s) sauvegardée(s)`;
+        } else if (videoCount > 0) {
+          msg = `${videoCount} vidéo(s) sauvegardée(s)`;
+        } else {
+          msg = `${imageCount} image(s) sauvegardée(s)`;
+        }
+        Platform.OS === 'android'
+          ? ToastAndroid.show(msg, ToastAndroid.LONG)
+          : Alert.alert("Succès", msg);
+        exitSelectionMode();
+      } else {
+        Alert.alert("Erreur", "Aucun média sauvegardé.");
+      }
+    } catch (err) {
+      console.error("Erreur saveMultipleToGallery:", err);
+      Alert.alert("Erreur", "Échec de la sauvegarde multiple.");
+    }
+  };
+
+  // 9. Supprimer plusieurs médias
+  const deleteMultipleMedias = async () => {
+    if (selectedMedias.length === 0) return;
+    const videoCount = selectedMedias.filter(m => m.isVideo).length;
+    const imageCount = selectedMedias.length - videoCount;
+    let desc = '';
+    if (videoCount > 0 && imageCount > 0) {
+      desc = `${imageCount} image(s) et ${videoCount} vidéo(s)`;
+    } else if (videoCount > 0) {
+      desc = `${videoCount} vidéo(s)`;
+    } else {
+      desc = `${imageCount} image(s)`;
+    }
+    Alert.alert(
+      "Supprimer",
+      `Supprimer ${desc} ?`,
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              let deletedCount = 0;
+              const toDeleteNames = selectedMedias.map(m => m.fileName);
+              for (const m of selectedMedias) {
+                try {
+                  await FileSystem.deleteAsync(m.uri, { idempotent: true });
+                  deletedCount++;
+                } catch {
+                  /* ignore */
+                }
+              }
+              if (deletedCount > 0) {
+                setMedias(medias.filter(m => !toDeleteNames.includes(m.fileName)));
+                const msg = `${deletedCount} média(s) supprimé(s)`;
+                Platform.OS === 'android'
+                  ? ToastAndroid.show(msg, ToastAndroid.LONG)
+                  : Alert.alert("Succès", msg);
+                exitSelectionMode();
+              }
+            } catch (err) {
+              console.error("Erreur deleteMultipleMedias:", err);
+              Alert.alert("Erreur", "Impossible de supprimer certains médias.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Activer/désactiver le mode sélection
+  const toggleSelectionMode = () => {
+    if (selectionMode) exitSelectionMode();
+    else setSelectionMode(true);
+  };
   const exitSelectionMode = () => {
     setSelectionMode(false);
     setSelectedMedias([]);
   };
 
-  // Sélectionner/désélectionner un média
+  // Sélection / désélection d’un item
   const toggleMediaSelection = (media: DownloadedMedia) => {
-    if (selectedMedias.some(m => m.fileName === media.fileName)) {
-      setSelectedMedias(selectedMedias.filter(m => m.fileName !== media.fileName));
+    const idx = selectedMedias.findIndex(m => m.fileName === media.fileName);
+    if (idx >= 0) {
+      setSelectedMedias(selectedMedias.filter((_, i) => i !== idx));
     } else {
       setSelectedMedias([...selectedMedias, media]);
     }
   };
 
-  // Afficher les options pour un média
+  // Tout sélectionner / Tout désélectionner
+  const toggleSelectAll = () => {
+    if (selectedMedias.length < medias.length) {
+      setSelectedMedias([...medias]);
+    } else {
+      setSelectedMedias([]);
+    }
+  };
+
+  // Options pour un unique média (alert avec actions)
   const showMediaOptions = (media: DownloadedMedia) => {
-    const mediaType = media.isVideo ? "vidéo" : "image";
+    const type = media.isVideo ? 'vidéo' : 'image';
     Alert.alert(
       "Options",
-      `Que souhaitez-vous faire avec cette ${mediaType} ?`,
+      `Que faire de cette ${type} ?`,
       [
         { text: "Annuler", style: "cancel" },
-        { text: "Sauvegarder dans la galerie", onPress: () => saveToGallery(media.uri, media.isVideo) },
+        { text: "Télécharger", onPress: () => saveToGallery(media.uri, media.isVideo) },
         { text: "Partager", onPress: () => shareMedia(media.uri, media.isVideo) },
         { text: "Supprimer", onPress: () => deleteMedia(media.uri, media.fileName, media.isVideo), style: "destructive" }
       ]
     );
   };
 
-  // Afficher les options pour les médias sélectionnés
-  const showMultipleMediaOptions = () => {
-    if (selectedMedias.length === 0) return;
-    
-    // Compter le nombre de vidéos et d'images
-    const videoCount = selectedMedias.filter(media => media.isVideo).length;
-    const imageCount = selectedMedias.length - videoCount;
-    
-    let title = '';
-    if (videoCount > 0 && imageCount > 0) {
-      title = `${imageCount} image(s) et ${videoCount} vidéo(s) sélectionnée(s)`;
-    } else if (videoCount > 0) {
-      title = `${videoCount} vidéo(s) sélectionnée(s)`;
-    } else {
-      title = `${imageCount} image(s) sélectionnée(s)`;
-    }
-    
-    Alert.alert(
-      title,
-      "Que souhaitez-vous faire avec ces médias ?",
-      [
-        { text: "Annuler", style: "cancel" },
-        { text: "Sauvegarder dans la galerie", onPress: saveMultipleToGallery },
-        { text: "Partager", onPress: shareMultipleMedias },
-        { text: "Supprimer", onPress: deleteMultipleMedias, style: "destructive" }
-      ]
-    );
-  };
-
+  // Rend chaque media en grille
   const renderMediaItem = ({ item }: { item: DownloadedMedia }) => {
-    const isSelected = selectedMedias.some(media => media.fileName === item.fileName);
-    
+    const isSelected = selectedMedias.some(m => m.fileName === item.fileName);
     return (
-      <TouchableOpacity 
-        style={[styles.mediaContainer, isSelected && styles.selectedMediaContainer]} 
+      <TouchableOpacity
+        style={[styles.mediaContainer, isSelected && styles.selectedMediaContainer]}
         onPress={() => selectionMode ? toggleMediaSelection(item) : showMediaOptions(item)}
         onLongPress={() => {
           if (!selectionMode) {
@@ -417,7 +330,6 @@ export default function DownloadsScreen() {
         }}
       >
         {item.isVideo ? (
-          // Rendu pour les vidéos
           <View style={styles.videoContainer}>
             <Image source={{ uri: item.uri }} style={styles.mediaPreview} />
             <View style={styles.videoOverlay}>
@@ -428,16 +340,15 @@ export default function DownloadsScreen() {
             </View>
           </View>
         ) : (
-          // Rendu pour les images
           <Image source={{ uri: item.uri }} style={styles.mediaPreview} />
         )}
-        
+
         {isSelected && (
           <View style={styles.selectedOverlay}>
             <Ionicons name="checkmark-circle" size={28} color="#4CAF50" />
           </View>
         )}
-        
+
         <Text style={styles.mediaDate}>
           {item.date.toLocaleDateString()} {item.date.toLocaleTimeString()}
         </Text>
@@ -447,32 +358,32 @@ export default function DownloadsScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: selectionMode 
-            ? `${selectedMedias.length} élément(s) sélectionné(s)` 
-            : 'Médias téléchargés',
-          headerShown: true,
-          headerRight: selectionMode ? () => (
-            <View style={{ flexDirection: 'row' }}>
-              <TouchableOpacity
-                onPress={showMultipleMediaOptions}
-                style={{ marginRight: 15 }}
-                disabled={selectedMedias.length === 0}
-              >
-                <Ionicons 
-                  name="ellipsis-vertical-circle" 
-                  size={24} 
-                  color={selectedMedias.length > 0 ? Colors[colorScheme ?? 'light'].tint : '#ccc'} 
-                />
+      {/* Header */}
+      <View style={[styles.customHeader, { backgroundColor: Colors[colorScheme ?? 'light'].tint }]}>
+        {!selectionMode ? (
+          <Text style={styles.headerTitle}>Médias téléchargés</Text>
+        ) : (
+          <>
+            <View style={styles.headerLeft}>
+              {/* Bouton pour quitter le mode sélection */}
+              <TouchableOpacity onPress={exitSelectionMode} style={{ marginRight: 16 }}>
+                <Ionicons name="close-circle" size={28} color="white" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={exitSelectionMode} style={{ marginRight: 10 }}>
-                <Ionicons name="close-circle" size={24} color={Colors[colorScheme ?? 'light'].tint} />
-              </TouchableOpacity>
+              <Text style={styles.headerTitle}>
+                {selectedMedias.length} sélectionné{selectedMedias.length > 1 ? 's' : ''}
+              </Text>
             </View>
-          ) : undefined
-        }}
-      />
+            {/* Bouton Tout sélectionner / Tout désélectionner */}
+            <TouchableOpacity onPress={toggleSelectAll} style={styles.headerRightButton}>
+              <Ionicons
+                name={selectedMedias.length === medias.length ? "checkbox-outline" : "checkmark-done-circle"}
+                size={28}
+                color="white"
+              />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -481,47 +392,33 @@ export default function DownloadsScreen() {
         </View>
       ) : medias.length > 0 ? (
         <>
+          {/* Grille */}
           <FlatList
             data={medias}
             renderItem={renderMediaItem}
             keyExtractor={item => item.fileName}
             numColumns={2}
-            contentContainerStyle={styles.mediaList}
+            contentContainerStyle={[styles.mediaList, { paddingBottom: selectionMode ? 140 : 60 }]}
           />
-          
-          {/* Bouton de sélection multiple très visible */}
-          {!selectionMode && medias.length > 1 && (
-            <TouchableOpacity 
-              style={styles.selectButton} 
-              onPress={toggleSelectionMode}
-            >
-              <Ionicons name="checkmark-circle" size={24} color="white" />
-              <Text style={styles.selectButtonText}>Sélectionner</Text>
-            </TouchableOpacity>
-          )}
-          
-          {/* Actions pour les médias sélectionnés */}
-          {selectionMode && selectedMedias.length > 0 && (
-            <View style={styles.actionBar}>
-              <TouchableOpacity 
-                style={styles.actionButton} 
-                onPress={saveMultipleToGallery}>
-                <Ionicons name="download" size={22} color="white" />
-                <Text style={styles.actionButtonText}>Sauvegarder</Text>
+
+          {/* Groupe de boutons flottants en mode sélection (Tout sélectionner, Télécharger, Supprimer) */}
+          {selectionMode && medias.length > 0 && (
+            <View style={styles.floatingGroup}>
+              {/* Tout sélectionner / Tout désélectionner */}
+              <TouchableOpacity style={styles.floatingButton} onPress={toggleSelectAll}>
+                <Ionicons
+                  name={selectedMedias.length === medias.length ? "trash-bin" : "checkmark-done-circle"}
+                  size={24}
+                  color="white"
+                />
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.actionButton} 
-                onPress={shareMultipleMedias}>
-                <Ionicons name="share-social" size={22} color="white" />
-                <Text style={styles.actionButtonText}>Partager</Text>
+              {/* Télécharger */}
+              <TouchableOpacity style={styles.floatingButton} onPress={saveMultipleToGallery}>
+                <Ionicons name="download" size={24} color="white" />
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.deleteButton]} 
-                onPress={deleteMultipleMedias}>
-                <Ionicons name="trash" size={22} color="white" />
-                <Text style={styles.actionButtonText}>Supprimer</Text>
+              {/* Supprimer */}
+              <TouchableOpacity style={[styles.floatingButton, styles.floatingDelete]} onPress={deleteMultipleMedias}>
+                <Ionicons name="trash" size={24} color="white" />
               </TouchableOpacity>
             </View>
           )}
@@ -544,6 +441,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  // Header
+  customHeader: {
+    height: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    justifyContent: 'space-between',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerRightButton: {
+    padding: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -627,63 +544,37 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     padding: 4,
   },
+
+  // Bouton flottant “Sélectionner” (désactivé ici, car on démarre en mode sélection)
   selectButton: {
+    display: 'none',
+  },
+
+  // Groupe de boutons flottants en mode sélection (Tout sélectionner, Télécharger, Supprimer)
+  floatingGroup: {
     position: 'absolute',
-    right: 100,
+    right: 16,
     bottom: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  floatingButton: {
     backgroundColor: '#FF5722',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 30,
-    elevation: 10,
+    padding: 12,
+    borderRadius: 24,
+    marginLeft: 12,
+    elevation: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'white',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  selectButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-    marginLeft: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 1,
-  },
-  actionBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
-    backgroundColor: '#f0f0f0',
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#ddd',
-  },
-  actionButton: {
-    backgroundColor: '#2196F3',
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  actionButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 6,
-    fontSize: 14,
-  },
-  deleteButton: {
+  floatingDelete: {
     backgroundColor: '#F44336',
   },
+
+  // Barre d’actions (cachée)
+  actionBar: {
+    display: 'none',
+  }
 });
