@@ -318,7 +318,7 @@ export default function WebViewScreen() {
       )}
       <WebView
         ref={webViewRef}
-        source={{ uri: 'http://ryvie.local:8080/' }}
+        source={{ uri: 'https://rdrop.test.jules.ryvie.fr' }}
         style={styles.webView}
         onLoadStart={() => setIsLoading(true)}
         onLoadEnd={() => setIsLoading(false)}
