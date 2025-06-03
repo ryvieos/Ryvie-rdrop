@@ -165,17 +165,18 @@ export default function DownloadsScreen() {
         } else {
           msg = `${imageCount} image(s) partagée(s) depuis Ryvie`;
         }
-        // @ts-ignore
-        await Share.share({ message: msg, url: selectedMedias[0].uri, urls: selectedMedias.map(m => m.uri) });
+        // Partager le premier média avec un message
+        await Share.share({ message: msg, url: selectedMedias[0].uri });
       } else {
+        // Sur Android, on ne peut partager qu'un média à la fois
         await shareMedia(selectedMedias[0].uri, selectedMedias[0].isVideo);
         if (selectedMedias.length > 1) {
           ToastAndroid.show('Seul le premier média a été partagé', ToastAndroid.LONG);
         }
       }
-    } catch (err) {
-      console.error("Erreur shareMultipleMedias:", err);
-      Alert.alert("Erreur", "Échec du partage multiple.");
+    } catch (error) {
+      console.error("Erreur lors du partage multiple :", error);
+      Alert.alert("Erreur", "Impossible de partager les médias sélectionnés.");
     }
   };
 
@@ -259,7 +260,7 @@ export default function DownloadsScreen() {
                 Platform.OS === 'android'
                   ? ToastAndroid.show(msg, ToastAndroid.LONG)
                   : Alert.alert("Succès", msg);
-                exitSelectionMode();
+                // Maintenir le mode sélection actif
               }
             } catch (err) {
               console.error("Erreur deleteMultipleMedias:", err);
@@ -401,23 +402,34 @@ export default function DownloadsScreen() {
             contentContainerStyle={[styles.mediaList, { paddingBottom: selectionMode ? 140 : 60 }]}
           />
 
-          {/* Groupe de boutons flottants en mode sélection (Tout sélectionner, Télécharger, Supprimer) */}
-          {selectionMode && medias.length > 0 && (
+          {/* Groupe de boutons flottants en mode sélection (Tout sélectionner, Partager, Télécharger, Supprimer) */}
+          {selectionMode && (
             <View style={styles.floatingGroup}>
               {/* Tout sélectionner / Tout désélectionner */}
-              <TouchableOpacity style={styles.floatingButton} onPress={toggleSelectAll}>
+              <TouchableOpacity 
+                style={[styles.floatingButton, styles.floatingSelect]} 
+                onPress={toggleSelectAll}
+              >
                 <Ionicons
-                  name={selectedMedias.length === medias.length ? "trash-bin" : "checkmark-done-circle"}
+                  name={selectedMedias.length === medias.length ? "checkmark-done-circle" : "checkmark-circle-outline"}
                   size={24}
                   color="white"
                 />
               </TouchableOpacity>
+              
               {/* Télécharger */}
-              <TouchableOpacity style={styles.floatingButton} onPress={saveMultipleToGallery}>
+              <TouchableOpacity 
+                style={[styles.floatingButton, styles.floatingDownload]}
+                onPress={saveMultipleToGallery}
+              >
                 <Ionicons name="download" size={24} color="white" />
               </TouchableOpacity>
+              
               {/* Supprimer */}
-              <TouchableOpacity style={[styles.floatingButton, styles.floatingDelete]} onPress={deleteMultipleMedias}>
+              <TouchableOpacity 
+                style={[styles.floatingButton, styles.floatingDelete]} 
+                onPress={deleteMultipleMedias}
+              >
                 <Ionicons name="trash" size={24} color="white" />
               </TouchableOpacity>
             </View>
@@ -550,27 +562,40 @@ const styles = StyleSheet.create({
     display: 'none',
   },
 
-  // Groupe de boutons flottants en mode sélection (Tout sélectionner, Télécharger, Supprimer)
+  // Groupe de boutons flottants en mode sélection (Tout sélectionner, Partager, Télécharger, Supprimer)
   floatingGroup: {
     position: 'absolute',
+    bottom: 30,
     right: 16,
-    bottom: 100,
     flexDirection: 'row',
     alignItems: 'center',
   },
   floatingButton: {
-    backgroundColor: '#FF5722',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#46bdff', // Couleur Ryvie
     padding: 12,
     borderRadius: 24,
-    marginLeft: 12,
+    marginLeft: 10,
     elevation: 6,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+    width: 48,
+    height: 48,
+  },
+  floatingSelect: {
+    backgroundColor: '#1da6f8', // Couleur Ryvie
+  },
+  floatingShare: {
+    backgroundColor: '#59d7ff', // Couleur Ryvie
+  },
+  floatingDownload: {
+    backgroundColor: '#46bdff', // Couleur Ryvie
   },
   floatingDelete: {
-    backgroundColor: '#F44336',
+    backgroundColor: '#023d8b', // Couleur Ryvie foncée
   },
 
   // Barre d’actions (cachée)
