@@ -8,6 +8,7 @@ services:
       - ./server/:/home/node/app
     command: ash -c "npm i && node index.js"
     container_name: app-rdrop-node
+    restart: unless-stopped
 
   nginx:
     build:
@@ -26,3 +27,4 @@ services:
     entrypoint: /mnt/openssl/create.sh
     command: ["nginx", "-g", "daemon off;"]
     container_name: app-rdrop-nginx
+    restart: unless-stopped
