@@ -7,6 +7,9 @@ services:
     volumes:
       - ./server/:/home/node/app
     command: ash -c "npm i && node index.js"
+    container_name: app-rdrop-node
+    restart: unless-stopped
+
   nginx:
     build:
       context: ./docker/
@@ -23,3 +26,5 @@ services:
     env_file: ./docker/fqdn.env
     entrypoint: /mnt/openssl/create.sh
     command: ["nginx", "-g", "daemon off;"]
+    container_name: app-rdrop-nginx
+    restart: unless-stopped
