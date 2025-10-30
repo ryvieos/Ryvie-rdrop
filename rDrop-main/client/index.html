@@ -43,6 +43,9 @@
                 <use xlink:href="#info-outline" />
             </svg>
         </a>
+        <a href="#" id="qrcode-btn" class="icon-button" title="Show QR Code">
+            <img src="images/qrcode-icon.svg" alt="QR Code" class="icon" />
+        </a>
         <a href="#" id="notification" class="icon-button" title="Enable Notifications" hidden>
             <svg class="icon">
                 <use xlink:href="#notifications" />
@@ -61,6 +64,7 @@
     </x-no-peers>
     <x-instructions desktop="Click to send files or right click to send a message" mobile="Tap to send files or long tap to send a message"></x-instructions>
     <!-- Footer -->
+     <button id="open-qrcode" class="button" style="margin: 16px 0;">Scanner le QR code</button>
     <footer class="column">
         <svg class="icon logo">
             <use xlink:href="#wifi-tethering" />
@@ -120,6 +124,20 @@
     <div class="toast-container full center">
         <x-toast class="row" shadow="1" id="toast">File Transfer Completed</x-toast>
     </div>
+    <!-- QR Code Dialog -->
+    <x-dialog id="qrcodeDialog">
+        <x-background class="full center">
+            <x-paper shadow="2">
+                <h3>Scan to Connect</h3>
+                <div id="qrcode" style="display: flex; justify-content: center; margin: 20px 0;"></div>
+                <div class="font-subheading" id="qrcode-url" style="margin: 16px 0; word-break: break-all; display: none;"></div>
+                <div class="row-reverse">
+                    <button class="button" id="show-url-btn">Show URL</button>
+                    <button class="button" close autofocus>Close</button>
+                </div>
+            </x-paper>
+        </x-background>
+    </x-dialog>
     <!-- About Page -->
     <x-about id="about" class="full center column">
         <section class="center column fade-in">
@@ -193,11 +211,16 @@
         <symbol id="linkedin" viewBox="0 0 24 24">
             <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" />
         </symbol>
+        <symbol id="qrcode" viewBox="0 0 24 24">
+            <path fill="currentColor" d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM15 19h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2zM17 17h2v2h-2zM19 19h2v2h-2z"/>
+        </symbol>
     </svg>
     <!-- Scripts -->
+    <script src="scripts/qrcode.min.js"></script>
     <script src="scripts/network.js"></script>
     <script src="scripts/ui.js"></script>
     <script src="scripts/clipboard.js" async></script>
+    <script src="scripts/qrcode-handler.js"></script>
     <!-- Sounds -->
     <audio id="blop" autobuffer="true">
         <source src="sounds/blop.mp3" type="audio/mpeg">
