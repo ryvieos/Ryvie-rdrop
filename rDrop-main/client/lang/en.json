@@ -1,0 +1,46 @@
+{
+  "app_title": "rDrop",
+  "header": {
+    "about": "About rDrop",
+    "qrcode": "Show QR Code",
+    "notifications": "Enable Notifications",
+    "install": "Install rDrop"
+  },
+  "main": {
+    "no_peers": "Open rDrop on other devices to send files",
+    "instructions_desktop": "Click to send files or right click to send a message",
+    "instructions_mobile": "Tap to send files or long tap to send a message",
+    "placeholder": "The easiest way to transfer data across devices",
+    "network_info": "You can be discovered by everyone on this network",
+    "scan_qr_button": "Scan QR code",
+    "you_are_known_as": "You are known as"
+  },
+  "dialogs": {
+    "receive_files": {
+      "title": "Files Received",
+      "loading": "Receiving files...",
+      "download_all": "Download All",
+      "close": "Close"
+    },
+    "send_message": {
+      "title": "Send a Message",
+      "placeholder": "Send a message",
+      "send": "Send",
+      "cancel": "Cancel"
+    },
+    "receive_message": {
+      "title": "Message Received",
+      "copy": "Copy",
+      "close": "Close"
+    },
+    "qrcode": {
+      "title": "Scan to Connect",
+      "show_url": "Show URL",
+      "hide_url": "Hide URL",
+      "close": "Close"
+    }
+  },
+  "toast": {
+    "file_transfer_completed": "File Transfer Completed"
+  }
+}

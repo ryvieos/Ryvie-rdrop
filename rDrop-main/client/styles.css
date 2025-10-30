@@ -339,6 +339,28 @@ footer .font-body2 {
     background-color: #3367d6;
 }
 
+/* QR Code Dialog Buttons */
+.qr-dialog-btn {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    margin-left: 8px;
+}
+
+.qr-dialog-btn:hover {
+    background-color: #5a9bff;
+}
+
+.qr-dialog-btn:active {
+    background-color: #3367d6;
+}
+
 @media (min-height: 800px) {
     footer {
         margin-bottom: 16px;

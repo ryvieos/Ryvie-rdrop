@@ -6,7 +6,8 @@ const $$$ = query => document.body.querySelectorAll(query);
 Events.on('display-name', e => {
     const me = e.detail.message;
     const $displayName = $('displayName')
-    $displayName.textContent = 'You are known as ' + me.displayName;
+    const prefix = (typeof i18n !== 'undefined') ? i18n.get('main.you_are_known_as') : 'You are known as';
+    $displayName.textContent = prefix + ' ' + me.displayName;
     $displayName.title = me.deviceName;
 });
 

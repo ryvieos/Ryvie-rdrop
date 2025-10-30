@@ -47,8 +47,8 @@
         qrcodeUrlDisplay.textContent = currentUrl;
         
         // Reset button text
-        if (showUrlBtn) {
-            showUrlBtn.textContent = 'Show URL';
+        if (showUrlBtn && typeof i18n !== 'undefined') {
+            showUrlBtn.textContent = i18n.get('dialogs.qrcode.show_url');
         }
         
         // Generate new QR code
@@ -83,10 +83,14 @@
             
             if (qrcodeUrlDisplay.style.display === 'none') {
                 qrcodeUrlDisplay.style.display = 'block';
-                showUrlBtn.textContent = 'Hide URL';
+                if (typeof i18n !== 'undefined') {
+                    showUrlBtn.textContent = i18n.get('dialogs.qrcode.hide_url');
+                }
             } else {
                 qrcodeUrlDisplay.style.display = 'none';
-                showUrlBtn.textContent = 'Show URL';
+                if (typeof i18n !== 'undefined') {
+                    showUrlBtn.textContent = i18n.get('dialogs.qrcode.show_url');
+                }
             }
         });
     }

@@ -38,20 +38,20 @@
 
 <body translate="no">
     <header class="row-reverse">
-        <a href="#about" class="icon-button" title="About rDrop">
+        <a href="#about" class="icon-button" data-i18n-title="header.about" title="À propos de rDrop">
             <svg class="icon">
                 <use xlink:href="#info-outline" />
             </svg>
         </a>
-        <a href="#" id="qrcode-btn" class="icon-button" title="Show QR Code">
+        <a href="#" id="qrcode-btn" class="icon-button" data-i18n-title="header.qrcode" title="Afficher le QR Code">
             <img src="images/qrcode-icon.svg" alt="QR Code" class="icon" />
         </a>
-        <a href="#" id="notification" class="icon-button" title="Enable Notifications" hidden>
+        <a href="#" id="notification" class="icon-button" data-i18n-title="header.notifications" title="Activer les notifications" hidden>
             <svg class="icon">
                 <use xlink:href="#notifications" />
             </svg>
         </a>
-        <a href="#" id="install" class="icon-button" title="Install rDrop" hidden>
+        <a href="#" id="install" class="icon-button" data-i18n-title="header.install" title="Installer rDrop" hidden>
             <svg class="icon">
                 <use xlink:href="#homescreen" />
             </svg>
@@ -60,34 +60,34 @@
     <!-- Peers -->
     <x-peers class="center"></x-peers>
     <x-no-peers>
-        <h2>Open rDrop on other devices to send files</h2>
+        <h2 data-i18n="main.no_peers">Ouvrez rDrop sur d'autres appareils pour envoyer des fichiers</h2>
     </x-no-peers>
-    <x-instructions desktop="Click to send files or right click to send a message" mobile="Tap to send files or long tap to send a message"></x-instructions>
+    <x-instructions desktop="Cliquez pour envoyer des fichiers ou clic droit pour envoyer un message" mobile="Appuyez pour envoyer des fichiers ou appui long pour envoyer un message"></x-instructions>
     <!-- Footer -->
-     <button id="open-qrcode" class="button" style="margin: 16px 0;">Scanner le QR code</button>
+    <button id="open-qrcode" class="button" data-i18n="main.scan_qr_button" style="margin: 16px 0;">Scanner le QR code</button>
     <footer class="column">
         <svg class="icon logo">
             <use xlink:href="#wifi-tethering" />
         </svg>
-        <div id="displayName" placeholder="The easiest way to transfer data across devices"></div>
-        <div class="font-body2">You can be discovered by everyone on this network</div>
+        <div id="displayName" data-i18n-placeholder="main.placeholder" placeholder="Le moyen le plus simple de transférer des données entre appareils"></div>
+        <div class="font-body2" data-i18n="main.network_info">Vous pouvez être découvert par tous sur ce réseau</div>
     </footer>
     <!-- Receive Dialog -->
     <x-dialog id="receiveDialog">
         <x-background class="full center">
             <x-paper shadow="2">
-                <h3>Fichiers Reçus</h3>
+                <h3 data-i18n="dialogs.receive_files.title">Fichiers Reçus</h3>
                 <div id="loadingIndicator" class="loading-indicator" style="display: none;">
                     <div class="loading-spinner"></div>
-                    <div class="loading-text">Réception des fichiers en cours...</div>
+                    <div class="loading-text" data-i18n="dialogs.receive_files.loading">Réception des fichiers en cours...</div>
                     <div class="loading-count"></div>
                 </div>
                 <div class="files-container">
                     <div id="filesList" class="files-list"></div>
                 </div>
                 <div class="row-reverse">
-                    <a class="button" id="downloadAll" close title="Télécharger Tout">Tout Télécharger</a>
-                    <button class="button" close>Fermer</button>
+                    <a class="button" id="downloadAll" close data-i18n="dialogs.receive_files.download_all" title="Télécharger Tout">Tout Télécharger</a>
+                    <button class="button" close data-i18n="dialogs.receive_files.close">Fermer</button>
                 </div>
             </x-paper>
         </x-background>
@@ -97,11 +97,11 @@
         <form action="#">
             <x-background class="full center">
                 <x-paper shadow="2">
-                    <h3>Send a Message</h3>
-                    <div id="textInput" class="textarea" role="textbox" placeholder="Send a message" autocomplete="off" autofocus contenteditable></div>
+                    <h3 data-i18n="dialogs.send_message.title">Envoyer un message</h3>
+                    <div id="textInput" class="textarea" role="textbox" data-i18n-placeholder="dialogs.send_message.placeholder" placeholder="Envoyer un message" autocomplete="off" autofocus contenteditable></div>
                     <div class="row-reverse">
-                        <button class="button" type="submit" close>Send</button>
-                        <a class="button" close>Cancel</a>
+                        <button class="button qr-dialog-btn" type="submit" close data-i18n="dialogs.send_message.send">Envoyer</button>
+                        <a class="button qr-dialog-btn" close data-i18n="dialogs.send_message.cancel">Annuler</a>
                     </div>
                 </x-paper>
             </x-background>
@@ -111,29 +111,29 @@
     <x-dialog id="receiveTextDialog">
         <x-background class="full center">
             <x-paper shadow="2">
-                <h3>Message Received</h3>
+                <h3 data-i18n="dialogs.receive_message.title">Message reçu</h3>
                 <div class="font-subheading" id="text"></div>
                 <div class="row-reverse">
-                    <button class="button" id="copy" close autofocus>Copy</button>
-                    <button class="button" close>Close</button>
+                    <button class="button qr-dialog-btn" id="copy" close autofocus data-i18n="dialogs.receive_message.copy">Copier</button>
+                    <button class="button qr-dialog-btn" close data-i18n="dialogs.receive_message.close">Fermer</button>
                 </div>
             </x-paper>
         </x-background>
     </x-dialog>
     <!-- Toast -->
     <div class="toast-container full center">
-        <x-toast class="row" shadow="1" id="toast">File Transfer Completed</x-toast>
+        <x-toast class="row" shadow="1" id="toast" data-i18n="toast.file_transfer_completed">Transfert de fichier terminé</x-toast>
     </div>
     <!-- QR Code Dialog -->
     <x-dialog id="qrcodeDialog">
         <x-background class="full center">
             <x-paper shadow="2">
-                <h3>Scan to Connect</h3>
+                <h3 data-i18n="dialogs.qrcode.title">Scanner pour se connecter</h3>
                 <div id="qrcode" style="display: flex; justify-content: center; margin: 20px 0;"></div>
                 <div class="font-subheading" id="qrcode-url" style="margin: 16px 0; word-break: break-all; display: none;"></div>
                 <div class="row-reverse">
-                    <button class="button" id="show-url-btn">Show URL</button>
-                    <button class="button" close autofocus>Close</button>
+                    <button class="button qr-dialog-btn" id="show-url-btn" data-i18n="dialogs.qrcode.show_url">Afficher l'URL</button>
+                    <button class="button qr-dialog-btn" close autofocus data-i18n="dialogs.qrcode.close">Fermer</button>
                 </div>
             </x-paper>
         </x-background>
@@ -216,6 +216,7 @@
         </symbol>
     </svg>
     <!-- Scripts -->
+    <script src="scripts/i18n.js"></script>
     <script src="scripts/qrcode.min.js"></script>
     <script src="scripts/network.js"></script>
     <script src="scripts/ui.js"></script>
