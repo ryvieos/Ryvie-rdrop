@@ -182,15 +182,49 @@ class Peer {
     }
 
     _setIP(request) {
-        if (request.headers['x-forwarded-for']) {
+        // Prioritize X-Real-IP, then X-Forwarded-For, then remote address
+        if (request.headers['x-real-ip']) {
+            this.ip = request.headers['x-real-ip'];
+        } else if (request.headers['x-forwarded-for']) {
             this.ip = request.headers['x-forwarded-for'].split(/\s*,\s*/)[0];
         } else {
             this.ip = request.connection.remoteAddress;
         }
+        
         // IPv4 and IPv6 use different values to refer to localhost
         if (this.ip == '::1' || this.ip == '::ffff:127.0.0.1') {
             this.ip = '127.0.0.1';
         }
+        
+        // Filter out Docker network IPs (172.x.x.x range)
+        if (this.ip.startsWith('172.') && request.headers['x-forwarded-for']) {
+            const forwardedIps = request.headers['x-forwarded-for'].split(/\s*,\s*/);
+            // Find first non-Docker IP
+            for (let ip of forwardedIps) {
+                if (!ip.startsWith('172.')) {
+                    this.ip = ip;
+                    break;
+                }
+            }
+        }
+        
+        // Normalize all local network IPs to the same identifier
+        // This allows all devices on the local network to see each other
+        
+        // Docker IPs → local-network
+        if (this.ip.startsWith('172.23.') || this.ip.startsWith('172.17.')) {
+            this.ip = 'local-network';
+        }
+        
+        // Private network IPs → local-network
+        // 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+        if (this.ip.startsWith('192.168.') || 
+            this.ip.startsWith('10.') ||
+            (this.ip.startsWith('172.') && !this.ip.startsWith('172.23.') && !this.ip.startsWith('172.17.'))) {
+            this.ip = 'local-network';
+        }
+        
+        console.log('Peer connected - IP:', this.ip, 'X-Real-IP:', request.headers['x-real-ip'], 'X-Forwarded-For:', request.headers['x-forwarded-for'], 'Remote:', request.connection.remoteAddress);
     }
 
     _setPeerId(request) {
