@@ -249,12 +249,32 @@ class RTCPeer extends Peer {
     }
 
     _connect(peerId, isCaller) {
-        if (!this._conn) this._openConnection(peerId, isCaller);
+        console.log('RTC: _connect called for', peerId, 'as', isCaller ? 'caller' : 'callee');
+        
+        if (!this._conn) {
+            this._openConnection(peerId, isCaller);
+        } else if (this._isCaller !== isCaller) {
+            // Si le rôle change, on doit recréer la connexion
+            console.warn('RTC: Role changed, recreating connection');
+            this._conn.close();
+            this._openConnection(peerId, isCaller);
+        } else {
+            console.log('RTC: Connection already exists, state:', this._conn.signalingState);
+        }
 
         if (isCaller) {
-            this._openChannel();
+            // Ne créer un canal que si on n'en a pas déjà un en cours
+            if (!this._channel || this._channel.readyState === 'closed') {
+                this._openChannel();
+            } else {
+                console.log('RTC: Channel already exists, state:', this._channel.readyState);
+            }
         } else {
-            this._conn.ondatachannel = e => this._onChannelOpened(e);
+            console.log('RTC: Waiting for data channel as callee');
+            this._conn.ondatachannel = e => {
+                console.log('RTC: ondatachannel event received');
+                this._onChannelOpened(e);
+            };
         }
     }
 
@@ -268,23 +288,38 @@ class RTCPeer extends Peer {
     }
 
     _openChannel() {
+        console.log('RTC: Creating data channel as caller for', this._peerId);
         const channel = this._conn.createDataChannel('data-channel', { 
             ordered: true,
             reliable: true // Obsolete. See https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/reliable
         });
         channel.onopen = e => this._onChannelOpened(e);
+        channel.onerror = e => console.error('RTC: Channel error:', e);
+        console.log('RTC: Creating offer for', this._peerId);
         this._conn.createOffer().then(d => this._onDescription(d)).catch(e => this._onError(e));
     }
 
     _onDescription(description) {
+        console.log('RTC: Setting local description:', description.type, 'for', this._peerId);
         // description.sdp = description.sdp.replace('b=AS:30', 'b=AS:1638400');
         this._conn.setLocalDescription(description)
-            .then(_ => this._sendSignal({ sdp: description }))
+            .then(_ => {
+                console.log('RTC: Sending', description.type, 'to', this._peerId);
+                this._sendSignal({ sdp: description });
+            })
             .catch(e => this._onError(e));
     }
 
     _onIceCandidate(event) {
-        if (!event.candidate) return;
+        if (!event.candidate) {
+            console.log('RTC: ICE gathering complete for', this._peerId);
+            return;
+        }
+        const candidate = event.candidate;
+        const candidateType = candidate.candidate.includes('typ relay') ? 'TURN' :
+                             candidate.candidate.includes('typ srflx') ? 'STUN' :
+                             candidate.candidate.includes('typ host') ? 'HOST' : 'UNKNOWN';
+        console.log('RTC: ICE candidate (' + candidateType + ') for', this._peerId);
         this._sendSignal({ ice: event.candidate });
     }
 
@@ -292,26 +327,49 @@ class RTCPeer extends Peer {
         if (!this._conn) this._connect(message.sender, false);
 
         if (message.sdp) {
+            const signalingState = this._conn.signalingState;
+            const sdpType = message.sdp.type;
+            
+            console.log('RTC: Received', sdpType, 'from', message.sender, 'in state:', signalingState);
+            
+            // Vérifier si on peut traiter ce message SDP selon l'état actuel
+            if (sdpType === 'offer' && signalingState !== 'stable' && signalingState !== 'have-local-offer') {
+                console.warn('RTC: Ignoring offer in state:', signalingState);
+                return;
+            }
+            
+            if (sdpType === 'answer' && signalingState !== 'have-local-offer') {
+                console.warn('RTC: Ignoring answer in state:', signalingState);
+                return;
+            }
+            
+            console.log('RTC: Setting remote description:', sdpType);
             this._conn.setRemoteDescription(new RTCSessionDescription(message.sdp))
                 .then( _ => {
+                    console.log('RTC: Remote description set, new state:', this._conn.signalingState);
                     if (message.sdp.type === 'offer') {
+                        console.log('RTC: Creating answer for', message.sender);
                         return this._conn.createAnswer()
                             .then(d => this._onDescription(d));
                     }
                 })
                 .catch(e => this._onError(e));
         } else if (message.ice) {
-            this._conn.addIceCandidate(new RTCIceCandidate(message.ice));
+            this._conn.addIceCandidate(new RTCIceCandidate(message.ice))
+                .catch(e => console.warn('RTC: Failed to add ICE candidate:', e));
         }
     }
 
     _onChannelOpened(event) {
         console.log('RTC: channel opened with', this._peerId);
         const channel = event.channel || event.target;
+        console.log('RTC: channel state:', channel.readyState);
         channel.binaryType = 'arraybuffer';
         channel.onmessage = e => this._onMessage(e.data);
         channel.onclose = e => this._onChannelClosed();
+        channel.onerror = e => console.error('RTC: Channel error:', e);
         this._channel = channel;
+        Events.fire('peer-connected', { peerId: this._peerId });
     }
 
     _onChannelClosed() {
@@ -321,14 +379,32 @@ class RTCPeer extends Peer {
     }
 
     _onConnectionStateChange(e) {
-        console.log('RTC: state changed:', this._conn.connectionState);
+        console.log('RTC: state changed:', this._conn.connectionState, 'for', this._peerId);
         switch (this._conn.connectionState) {
+            case 'connected':
+                console.log('RTC: Successfully connected to', this._peerId);
+                this._reconnectAttempts = 0;
+                break;
             case 'disconnected':
+                console.warn('RTC: Disconnected from', this._peerId);
                 this._onChannelClosed();
                 break;
             case 'failed':
+                console.error('RTC: Connection failed with', this._peerId);
+                this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+                if (this._reconnectAttempts > 3) {
+                    console.error('RTC: Max reconnection attempts reached for', this._peerId);
+                    Events.fire('notify-user', 'Connection failed with peer. Please try again.');
+                    return;
+                }
                 this._conn = null;
-                this._onChannelClosed();
+                this._channel = null;
+                console.log('RTC: Will retry connection (attempt', this._reconnectAttempts, ')');
+                setTimeout(() => {
+                    if (!this._isConnected()) {
+                        this._connect(this._peerId, this._isCaller);
+                    }
+                }, 2000 * this._reconnectAttempts);
                 break;
         }
     }
@@ -536,7 +612,28 @@ class Events {
 
 RTCPeer.config = {
     'sdpSemantics': 'unified-plan',
-    'iceServers': [{
-        urls: 'stun:stun.l.google.com:19302'
-    }]
+    'iceServers': [
+        {
+            urls: 'stun:stun.l.google.com:19302'
+        },
+        {
+            urls: 'stun:stun1.l.google.com:19302'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
+    ],
+    'iceCandidatePoolSize': 10
 }
