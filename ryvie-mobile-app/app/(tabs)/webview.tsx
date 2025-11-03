@@ -1,23 +1,35 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform, Text, Image } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRouter } from 'expo-router';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
 
 // Dossier où les fichiers seront stockés en interne (onglet "Téléchargements")
 const DOWNLOADS_DIRECTORY = `${FileSystem.documentDirectory}downloads/`;
+const LOCAL_API_URL = 'http://ryvie.local:3002/api/settings/ryvie-domains';
+const LOCAL_WEBVIEW_URL = 'http://ryvie.local:8080';
+const STORAGE_KEY_RDROP_DOMAIN = '@rdrop_public_domain';
 
 export default function WebViewScreen() {
   const [isLoading, setIsLoading] = useState(true);
+  const [isResolvingUrl, setIsResolvingUrl] = useState(true);
   const [mediaPermission, setMediaPermission] = useState(false);
+  const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
   const colorScheme = useColorScheme();
   const router = useRouter();
 
-  // 1. Demander la permission d'accéder à la galerie (Pellicule)
+  // 1. Résoudre l'URL de la WebView au lancement
+  useEffect(() => {
+    resolveWebViewUrl();
+  }, []);
+
+  // 2. Demander la permission d'accéder à la galerie (Pellicule)
   useEffect(() => {
     (async () => {
       const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -26,7 +38,61 @@ export default function WebViewScreen() {
     })();
   }, []);
 
-  // 2. Créer le dossier interne "downloads/" s'il n'existe pas
+  /**
+   * Résout l'URL à charger dans la WebView :
+   * 1. Tente de joindre l'API locale pour récupérer le domaine public rdrop
+   * 2. Si succès : stocke le domaine et charge l'URL locale
+   * 3. Si échec : charge le domaine public stocké ou affiche un message d'erreur
+   */
+  const resolveWebViewUrl = async () => {
+    setIsResolvingUrl(true);
+    try {
+      // Tentative de connexion à l'API locale
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // Timeout 5s
+
+      const response = await fetch(LOCAL_API_URL, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.domains && data.domains.rdrop) {
+          const publicDomain = data.domains.rdrop;
+          // Stocker le domaine public pour usage ultérieur
+          await AsyncStorage.setItem(STORAGE_KEY_RDROP_DOMAIN, publicDomain);
+          console.log('Domaine public rdrop stocké :', publicDomain);
+          // Charger l'URL locale car le Ryvie est accessible
+          setWebViewUrl(LOCAL_WEBVIEW_URL);
+          setErrorMessage(null);
+          setIsResolvingUrl(false);
+          return;
+        }
+      }
+      // Si la réponse n'est pas OK ou les données sont invalides, on passe au fallback
+      throw new Error('API locale inaccessible ou données invalides');
+    } catch (error) {
+      console.log('Impossible de joindre l\'API locale, tentative de récupération du domaine stocké...');
+      // Récupérer le domaine public stocké
+      const storedDomain = await AsyncStorage.getItem(STORAGE_KEY_RDROP_DOMAIN);
+      if (storedDomain) {
+        console.log('Utilisation du domaine public stocké :', storedDomain);
+        setWebViewUrl(`https://${storedDomain}`);
+        setErrorMessage(null);
+        setIsResolvingUrl(false);
+      } else {
+        console.log('Aucun domaine public stocké, affichage du message d\'erreur');
+        setErrorMessage(
+          'Veuillez vous connecter une première fois à proximité de votre Ryvie pour configurer l\'application.'
+        );
+        setWebViewUrl(null);
+        setIsResolvingUrl(false);
+      }
+    }
+  };
+
+  // 3. Créer le dossier interne "downloads/" s'il n'existe pas
   useEffect(() => {
     async function ensureDownloadsFolder() {
       try {
@@ -299,30 +365,56 @@ export default function WebViewScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      {isLoading && (
-        <ActivityIndicator
-          style={styles.loadingIndicator}
-          size="large"
-          color={Colors[colorScheme ?? 'light'].tint}
-        />
+      {isResolvingUrl ? (
+        // Affichage du spinner pendant la résolution de l'URL
+        <View style={styles.loadingContainer}>
+          <Image
+            source={require('@/assets/images/ryvielogo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <ActivityIndicator
+            size="large"
+            color={Colors[colorScheme ?? 'light'].tint}
+            style={styles.spinner}
+          />
+          <Text style={styles.loadingTitle}>Connexion à votre Ryvie</Text>
+          <Text style={styles.loadingSubtitle}>Recherche de votre appareil sur le réseau local...</Text>
+        </View>
+      ) : webViewUrl === null ? (
+        // Affichage du message d'erreur si aucune URL n'est disponible
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Connexion impossible</Text>
+          <Text style={styles.errorMessage}>{errorMessage}</Text>
+        </View>
+      ) : (
+        <>
+          {isLoading && (
+            <ActivityIndicator
+              style={styles.loadingIndicator}
+              size="large"
+              color={Colors[colorScheme ?? 'light'].tint}
+            />
+          )}
+          <WebView
+            ref={webViewRef}
+            source={{ uri: webViewUrl }}
+            style={styles.webView}
+            onLoadStart={() => setIsLoading(true)}
+            onLoadEnd={() => setIsLoading(false)}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            allowFileAccess={true}
+            allowFileDownload={true}
+            allowUniversalAccessFromFileURLs={true}
+            startInLoadingState={true}
+            originWhitelist={['*']}
+            injectedJavaScript={injectedJavaScript}
+            onMessage={handleOnMessage}
+            onShouldStartLoadWithRequest={() => true}
+          />
+        </>
       )}
-      <WebView
-        ref={webViewRef}
-        source={{ uri: 'http://ryvie.local:8080' }}
-        style={styles.webView}
-        onLoadStart={() => setIsLoading(true)}
-        onLoadEnd={() => setIsLoading(false)}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        allowFileAccess={true}
-        allowFileDownload={true}
-        allowUniversalAccessFromFileURLs={true}
-        startInLoadingState={true}
-        originWhitelist={['*']}
-        injectedJavaScript={injectedJavaScript}
-        onMessage={handleOnMessage}
-        onShouldStartLoadWithRequest={() => true}
-      />
     </View>
   );
 }
@@ -341,6 +433,54 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 32,
+  },
+  logo: {
+    width: 120,
+    height: 120,
+    marginBottom: 32,
+  },
+  spinner: {
+    marginBottom: 24,
+  },
+  loadingTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  loadingSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  errorTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
