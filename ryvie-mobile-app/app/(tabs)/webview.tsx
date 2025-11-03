@@ -250,7 +250,7 @@ export default function WebViewScreen() {
 
         const userConfirmed = await confirmSaveToPellicule(totalToSave);
         if (!userConfirmed) {
-          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistré${totalToSave > 1 ? 's' : ''} uniquement dans “Téléchargements”`;
+          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistré${totalToSave > 1 ? 's' : ''} dans la Pellicule”`;
           if (Platform.OS === 'android') {
             ToastAndroid.show(message, ToastAndroid.LONG);
           } else {
@@ -274,7 +274,7 @@ export default function WebViewScreen() {
 
         // 4.e. Notifications finales
         if (successCount > 0) {
-          const msg = `${successCount} fichier${successCount > 1 ? 's' : ''} enregistré${successCount > 1 ? 's' : ''} dans la Pellicule\n(et déjà dans “Téléchargements”)`;
+          const msg = `${successCount} fichier${successCount > 1 ? 's' : ''} enregistré${successCount > 1 ? 's' : ''} dans la Pellicule`;
           if (Platform.OS === 'android') {
             ToastAndroid.show(msg, ToastAndroid.LONG);
           } else {
