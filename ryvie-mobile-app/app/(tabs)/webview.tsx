@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform, Text, Image, Animated } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform, Text, Image, Animated, Modal, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
@@ -20,6 +20,9 @@ export default function WebViewScreen() {
   const [mediaPermission, setMediaPermission] = useState(false);
   const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('success');
   const webViewRef = useRef<WebView>(null);
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -28,6 +31,31 @@ export default function WebViewScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const heartbeatAnim = useRef(new Animated.Value(1)).current;
+  const toastAnim = useRef(new Animated.Value(0)).current;
+
+  // Fonction pour afficher un toast moderne
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+    
+    Animated.sequence([
+      Animated.spring(toastAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+      Animated.delay(3000),
+      Animated.timing(toastAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setToastVisible(false);
+    });
+  };
 
   // 1. Résoudre l'URL de la WebView au lancement
   useEffect(() => {
@@ -130,7 +158,7 @@ export default function WebViewScreen() {
       } else {
         console.log('Aucun domaine public stocké, affichage du message d\'erreur');
         setErrorMessage(
-          'Veuillez vous connecter une première fois à proximité de votre Ryvie pour configurer l\'application.'
+          'Pour commencer, connectez-vous au même réseau Wi-Fi que votre Ryvie. L\'application détectera automatiquement votre appareil et enregistrera sa configuration.'
         );
         setWebViewUrl(null);
         setIsResolvingUrl(false);
@@ -252,18 +280,24 @@ export default function WebViewScreen() {
   /**
    * Confirmation utilisateur avant d'enregistrer N fichiers dans la Pellicule.
    */
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+  const [confirmModalCount, setConfirmModalCount] = useState(0);
+  const [confirmModalResolve, setConfirmModalResolve] = useState<((value: boolean) => void) | null>(null);
+
   const confirmSaveToPellicule = (count: number): Promise<boolean> => {
     return new Promise(resolve => {
-      Alert.alert(
-        'Confirmation',
-        `Voulez-vous enregistrer ${count} fichier${count > 1 ? 's' : ''} dans la Pellicule ?`,
-        [
-          { text: 'Annuler', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Enregistrer', onPress: () => resolve(true) },
-        ],
-        { cancelable: true }
-      );
+      setConfirmModalCount(count);
+      setConfirmModalVisible(true);
+      setConfirmModalResolve(() => resolve);
     });
+  };
+
+  const handleConfirmSave = (confirmed: boolean) => {
+    setConfirmModalVisible(false);
+    if (confirmModalResolve) {
+      confirmModalResolve(confirmed);
+      setConfirmModalResolve(null);
+    }
   };
 
   // 3. Script injecté dans la WebView pour capter plusieurs blobs
@@ -345,12 +379,8 @@ export default function WebViewScreen() {
 
         // 4.b. Si certains fichiers n'ont pas pu être écrits en local
         if (writeFailures > 0) {
-          const failMsg = `${writeFailures} échec${writeFailures > 1 ? 's' : ''} lors de l’écriture locale.`;
-          if (Platform.OS === 'android') {
-            ToastAndroid.show(failMsg, ToastAndroid.LONG);
-          } else {
-            Alert.alert('Attention', failMsg);
-          }
+          const failMsg = `${writeFailures} échec${writeFailures > 1 ? 's' : ''} lors de l'écriture locale.`;
+          showToast(failMsg, 'error');
         }
 
         // 4.c. Demander confirmation pour la Pellicule
@@ -362,12 +392,8 @@ export default function WebViewScreen() {
 
         const userConfirmed = await confirmSaveToPellicule(totalToSave);
         if (!userConfirmed) {
-          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistré${totalToSave > 1 ? 's' : ''} dans la Pellicule”`;
-          if (Platform.OS === 'android') {
-            ToastAndroid.show(message, ToastAndroid.LONG);
-          } else {
-            Alert.alert('Terminé', message);
-          }
+          const message = `${totalToSave} fichier${totalToSave > 1 ? 's' : ''} enregistré${totalToSave > 1 ? 's' : ''} dans la Pellicule"`;
+          showToast(message, 'info');
           return;
         }
 
@@ -386,25 +412,16 @@ export default function WebViewScreen() {
 
         // 4.e. Notifications finales
         if (successCount > 0) {
-          const msg = `${successCount} fichier${successCount > 1 ? 's' : ''} enregistré${successCount > 1 ? 's' : ''} dans la Pellicule`;
-          if (Platform.OS === 'android') {
-            ToastAndroid.show(msg, ToastAndroid.LONG);
-          } else {
-            Alert.alert('Enregistrement terminé', msg);
-          }
-        }
-        if (failureCount > 0) {
-          const failMsg2 = `${failureCount} échec${failureCount > 1 ? 's' : ''} lors de l’enregistrement dans la Pellicule.`;
-          if (Platform.OS === 'android') {
-            ToastAndroid.show(failMsg2, ToastAndroid.LONG);
-          } else {
-            Alert.alert('Attention', failMsg2);
-          }
+          const msg = ` ${successCount} fichier${successCount > 1 ? 's' : ''} enregistré${successCount > 1 ? 's' : ''} dans la galerie`;
+          showToast(msg, 'success');
+        } else if (fileUris.length > 0) {
+          const errMsg = ` Impossible d'enregistrer les fichiers dans la galerie`;
+          showToast(errMsg, 'error');
         }
       }
     } catch (error) {
       console.error('Erreur du handler onMessage :', error);
-      Alert.alert('Erreur', `Une erreur est survenue : ${error instanceof Error ? error.message : 'inconnue'}`);
+      showToast(` Une erreur est survenue`, 'error');
     }
   };
 
@@ -437,8 +454,8 @@ export default function WebViewScreen() {
               color="#46bdff"
               style={styles.spinner}
             />
-            <Text style={styles.loadingTitle}>Connexion à votre Ryvie</Text>
-            <Text style={styles.loadingSubtitle}>Recherche de votre appareil sur le réseau local...</Text>
+            <Text style={styles.loadingTitle}>Connexion en cours</Text>
+            <Text style={styles.loadingSubtitle}>Recherche de votre Ryvie sur le réseau...</Text>
           </Animated.View>
         </View>
       ) : webViewUrl === null ? (
@@ -452,7 +469,7 @@ export default function WebViewScreen() {
             />
           </View>
           <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Connexion impossible</Text>
+            <Text style={styles.errorTitle}>🔌 Première connexion</Text>
             <Text style={styles.errorMessage}>{errorMessage}</Text>
           </View>
         </View>
@@ -483,6 +500,74 @@ export default function WebViewScreen() {
             onShouldStartLoadWithRequest={() => true}
           />
         </>
+      )}
+      
+      {/* Toast moderne (en bas) */}
+      {toastVisible && (
+        <Animated.View
+          style={[
+            styles.toastContainer,
+            {
+              backgroundColor: '#2d3436',
+              transform: [
+                {
+                  translateY: toastAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [100, 0],
+                  }),
+                },
+              ],
+              opacity: toastAnim,
+            },
+          ]}
+        >
+          <Text style={styles.toastIcon}>
+            {toastType === 'success' ? '✅' : toastType === 'error' ? '❌' : 'ℹ️'}
+          </Text>
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </Animated.View>
+      )}
+
+      {/* Modal de confirmation moderne */}
+      <Modal
+        transparent
+        visible={confirmModalVisible}
+        animationType="fade"
+        onRequestClose={() => handleConfirmSave(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalIcon}>💾</Text>
+            <Text style={styles.modalTitle}>Enregistrer dans la galerie</Text>
+            <Text style={styles.modalMessage}>
+              Voulez-vous enregistrer {confirmModalCount} fichier{confirmModalCount > 1 ? 's' : ''} dans votre galerie photo ?
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => handleConfirmSave(false)}
+              >
+                <Text style={styles.modalButtonTextCancel}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonConfirm]}
+                onPress={() => handleConfirmSave(true)}
+              >
+                <Text style={styles.modalButtonTextConfirm}>Enregistrer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bouton refresh flottant */}
+      {webViewUrl && (
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={() => webViewRef.current?.reload()}
+        >
+          <Text style={styles.refreshIcon}>🔄</Text>
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -576,5 +661,116 @@ const styles = StyleSheet.create({
     color: '#636e72',
     textAlign: 'center',
     lineHeight: 24,
+  },
+  toastContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    right: 20,
+    padding: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 9999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  toastIcon: {
+    fontSize: 20,
+  },
+  toastText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 28,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  modalIcon: {
+    fontSize: 48,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2d3436',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#636e72',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 24,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalButtonCancel: {
+    backgroundColor: '#f1f3f5',
+  },
+  modalButtonConfirm: {
+    backgroundColor: '#4285f4',
+  },
+  modalButtonTextCancel: {
+    color: '#495057',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalButtonTextConfirm: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  refreshButton: {
+    position: 'absolute',
+    bottom: 60,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#4285f4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 999,
+  },
+  refreshIcon: {
+    fontSize: 24,
   },
 });
