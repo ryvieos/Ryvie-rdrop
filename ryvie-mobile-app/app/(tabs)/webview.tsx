@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform, Text, Image } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform, Text, Image, Animated } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
@@ -23,10 +23,56 @@ export default function WebViewScreen() {
   const webViewRef = useRef<WebView>(null);
   const colorScheme = useColorScheme();
   const router = useRouter();
+  
+  // Animations
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const heartbeatAnim = useRef(new Animated.Value(1)).current;
 
   // 1. Résoudre l'URL de la WebView au lancement
   useEffect(() => {
     resolveWebViewUrl();
+    // Démarrer les animations
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    
+    // Animation de battement de cœur pour le logo
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(heartbeatAnim, {
+          toValue: 1.1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartbeatAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartbeatAnim, {
+          toValue: 1.05,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartbeatAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.delay(800),
+      ])
+    ).start();
   }, []);
 
   // 2. Demander la permission d'accéder à la galerie (Pellicule)
@@ -368,24 +414,47 @@ export default function WebViewScreen() {
       {isResolvingUrl ? (
         // Affichage du spinner pendant la résolution de l'URL
         <View style={styles.loadingContainer}>
-          <Image
-            source={require('@/assets/images/ryvielogo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <ActivityIndicator
-            size="large"
-            color={Colors[colorScheme ?? 'light'].tint}
-            style={styles.spinner}
-          />
-          <Text style={styles.loadingTitle}>Connexion à votre Ryvie</Text>
-          <Text style={styles.loadingSubtitle}>Recherche de votre appareil sur le réseau local...</Text>
+          <Animated.View
+            style={[
+              styles.logoContainer,
+              {
+                opacity: fadeAnim,
+                transform: [
+                  { scale: Animated.multiply(scaleAnim, heartbeatAnim) },
+                ],
+              },
+            ]}
+          >
+            <Image
+              source={require('@/assets/images/ryvielogo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </Animated.View>
+          <Animated.View style={{ opacity: fadeAnim }}>
+            <ActivityIndicator
+              size="large"
+              color="#46bdff"
+              style={styles.spinner}
+            />
+            <Text style={styles.loadingTitle}>Connexion à votre Ryvie</Text>
+            <Text style={styles.loadingSubtitle}>Recherche de votre appareil sur le réseau local...</Text>
+          </Animated.View>
         </View>
       ) : webViewUrl === null ? (
         // Affichage du message d'erreur si aucune URL n'est disponible
         <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>Connexion impossible</Text>
-          <Text style={styles.errorMessage}>{errorMessage}</Text>
+          <View style={styles.errorLogoContainer}>
+            <Image
+              source={require('@/assets/images/ryvielogo.png')}
+              style={styles.errorLogo}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Connexion impossible</Text>
+            <Text style={styles.errorMessage}>{errorMessage}</Text>
+          </View>
         </View>
       ) : (
         <>
@@ -438,50 +507,74 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 32,
   },
+  logoContainer: {
+    marginBottom: 40,
+  },
   logo: {
-    width: 120,
-    height: 120,
-    marginBottom: 32,
+    width: 140,
+    height: 140,
   },
   spinner: {
     marginBottom: 24,
+    marginTop: 16,
   },
   loadingTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 22,
+    fontWeight: '700',
     color: '#1a1a1a',
     marginBottom: 8,
     textAlign: 'center',
+    letterSpacing: 0.5,
   },
   loadingSubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#666',
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
+    paddingHorizontal: 20,
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f5f5f5',
+    padding: 24,
+    backgroundColor: '#f8f9fa',
+  },
+  errorLogoContainer: {
+    marginBottom: 32,
+    opacity: 0.4,
+  },
+  errorLogo: {
+    width: 100,
+    height: 100,
+  },
+  errorCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
+    maxWidth: 400,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff6b6b',
   },
   errorTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: '700',
+    color: '#2d3436',
     marginBottom: 16,
     textAlign: 'center',
   },
   errorMessage: {
     fontSize: 16,
-    color: '#666',
+    color: '#636e72',
     textAlign: 'center',
     lineHeight: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });
