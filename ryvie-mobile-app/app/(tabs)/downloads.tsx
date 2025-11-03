@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
@@ -70,12 +70,17 @@ export default function DownloadsScreen() {
         const ext = fileName.split('.').pop()?.toLowerCase() || '';
         const fileUri = DOWNLOADS_DIRECTORY + fileName;
         const fileInfo = await FileSystem.getInfoAsync(fileUri);
+        const fileInfoWithTime = fileInfo as FileSystem.FileInfo & { modificationTime?: number };
+        const modificationTimeSeconds =
+          typeof fileInfoWithTime.modificationTime === 'number'
+            ? fileInfoWithTime.modificationTime
+            : Date.now() / 1000;
         const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'];
         const isVideo = videoExts.includes(ext) || fileName.startsWith('video_');
         return {
           uri: fileUri,
           fileName,
-          date: new Date(fileInfo.modificationTime * 1000),
+          date: new Date(modificationTimeSeconds * 1000),
           isVideo,
           type: ext
         };

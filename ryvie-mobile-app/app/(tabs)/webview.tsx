@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, ActivityIndicator, Alert, ToastAndroid, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { Stack, useRouter } from 'expo-router';
 import { useColorScheme } from '@/hooks/useColorScheme';
@@ -91,6 +91,10 @@ export default function WebViewScreen() {
 
       // Écriture locale dans "downloads/"
       if (mediaUrl.startsWith('data:')) {
+        if (!FileSystem.EncodingType || !('Base64' in FileSystem.EncodingType)) {
+          console.warn('FileSystem Base64 encoding not available, skipping base64 write.');
+          return { uri: null, success: false };
+        }
         const [, base64Data] = mediaUrl.split(',');
         await FileSystem.writeAsStringAsync(fileUri, base64Data, {
           encoding: FileSystem.EncodingType.Base64,
@@ -304,7 +308,7 @@ export default function WebViewScreen() {
       )}
       <WebView
         ref={webViewRef}
-        source={{ uri: 'https://rdrop.test.jules.ryvie.fr' }}
+        source={{ uri: 'http://ryvie.local:8080' }}
         style={styles.webView}
         onLoadStart={() => setIsLoading(true)}
         onLoadEnd={() => setIsLoading(false)}
