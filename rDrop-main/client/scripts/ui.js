@@ -14,6 +14,7 @@ Events.on('display-name', e => {
 class PeersUI {
 
     constructor() {
+        this._peerLeftTimers = {};
         Events.on('peer-joined', e => this._onPeerJoined(e.detail));
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
         Events.on('peers', e => this._onPeers(e.detail));
@@ -22,6 +23,11 @@ class PeersUI {
     }
 
     _onPeerJoined(peer) {
+        // Cancel any pending removal for this peer
+        if (this._peerLeftTimers[peer.id]) {
+            clearTimeout(this._peerLeftTimers[peer.id]);
+            delete this._peerLeftTimers[peer.id];
+        }
         if ($(peer.id)) return; // peer already exists
         const peerUI = new PeerUI(peer);
         $$('x-peers').appendChild(peerUI.$el);
@@ -29,14 +35,31 @@ class PeersUI {
     }
 
     _onPeers(peers) {
-        this._clearPeers();
+        const newPeerIds = peers.map(p => p.id);
+        // Remove peers that are no longer in the list (with delay)
+        const currentPeers = $$$("x-peer");
+        currentPeers.forEach($peer => {
+            if (!newPeerIds.includes($peer.id)) {
+                this._onPeerLeft($peer.id);
+            }
+        });
+        // Add/keep peers from the new list
         peers.forEach(peer => this._onPeerJoined(peer));
     }
 
     _onPeerLeft(peerId) {
         const $peer = $(peerId);
         if (!$peer) return;
-        $peer.remove();
+        // Cancel any existing timer for this peer
+        if (this._peerLeftTimers[peerId]) {
+            clearTimeout(this._peerLeftTimers[peerId]);
+        }
+        // Delay removal by 10 seconds
+        this._peerLeftTimers[peerId] = setTimeout(() => {
+            const $p = $(peerId);
+            if ($p) $p.remove();
+            delete this._peerLeftTimers[peerId];
+        }, 10000);
     }
 
     _onFileProgress(progress) {

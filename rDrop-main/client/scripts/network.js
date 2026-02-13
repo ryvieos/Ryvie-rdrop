@@ -5,6 +5,10 @@ class ServerConnection {
 
     constructor() {
         this._connect();
+        this._silentReconnect = false;
+        this._disconnectedSince = null;
+        this._gracePeriod = 8000; // ms before showing "Connection lost"
+        this._graceTimer = null;
         Events.on('beforeunload', e => this._disconnect());
         Events.on('pagehide', e => this._disconnect());
         document.addEventListener('visibilitychange', e => this._onVisibilityChange());
@@ -13,9 +17,15 @@ class ServerConnection {
     _connect() {
         clearTimeout(this._reconnectTimer);
         if (this._isConnected() || this._isConnecting()) return;
+        // Detach old socket handlers to prevent ghost disconnects
+        if (this._socket) {
+            this._socket.onclose = null;
+            this._socket.onerror = null;
+            this._socket.onmessage = null;
+        }
         const ws = new WebSocket(this._endpoint());
         ws.binaryType = 'arraybuffer';
-        ws.onopen = e => console.log('WS: server connected');
+        ws.onopen = e => this._onConnect();
         ws.onmessage = e => this._onMessage(e.data);
         ws.onclose = e => this._onDisconnect();
         ws.onerror = e => console.error(e);
@@ -70,9 +80,20 @@ class ServerConnection {
 
     _onDisconnect() {
         console.log('WS: server disconnected');
-        Events.fire('notify-user', 'Connection lost. Retry in 5 seconds...');
         clearTimeout(this._reconnectTimer);
-        this._reconnectTimer = setTimeout(_ => this._connect(), 5000);
+        if (!this._disconnectedSince) {
+            this._disconnectedSince = Date.now();
+            this._silentReconnect = true;
+            // Start grace period — only show notification if still disconnected after delay
+            this._graceTimer = setTimeout(() => {
+                if (!this._isConnected()) {
+                    this._silentReconnect = false;
+                    Events.fire('notify-user', 'Connection lost. Reconnecting...');
+                }
+            }, this._gracePeriod);
+        }
+        // Reconnect quickly and silently
+        this._reconnectTimer = setTimeout(_ => this._connect(), 1000);
     }
 
     _onVisibilityChange() {
@@ -82,6 +103,21 @@ class ServerConnection {
 
     _isConnected() {
         return this._socket && this._socket.readyState === this._socket.OPEN;
+    }
+
+    _onConnect() {
+        console.log('WS: server connected');
+        clearTimeout(this._graceTimer);
+        if (this._disconnectedSince) {
+            const downtime = Date.now() - this._disconnectedSince;
+            console.log('WS: reconnected after', downtime, 'ms');
+            if (!this._silentReconnect) {
+                // Was visible to user, notify reconnection
+                Events.fire('notify-user', 'Reconnected.');
+            }
+            this._disconnectedSince = null;
+            this._silentReconnect = false;
+        }
     }
 
     _isConnecting() {

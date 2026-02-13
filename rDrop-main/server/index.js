@@ -23,6 +23,15 @@ class SnapdropServer {
         this._wss.on('headers', (headers, response) => this._onHeaders(headers, response));
 
         this._rooms = {};
+        this._messageBuffers = {}; // peerId -> [messages] for temporarily disconnected peers
+        this._disconnectTimers = {}; // peerId -> timer for grace period
+
+        // Protocol-level WebSocket ping to keep connections alive through proxies
+        this._wssPingInterval = setInterval(() => {
+            this._wss.clients.forEach(socket => {
+                if (socket.readyState === 1) socket.ping();
+            });
+        }, 2000);
 
         console.log('Snapdrop is running on port', port);
     }
@@ -30,7 +39,11 @@ class SnapdropServer {
     _onConnection(peer) {
         this._joinRoom(peer);
         peer.socket.on('message', message => this._onMessage(peer, message));
-        peer.socket.on('error', console.error);
+        peer.socket.on('close', (code, reason) => {
+            console.log('Socket closed for', peer.id, 'code:', code, 'reason:', reason ? reason.toString() : 'none');
+            this._onPeerDisconnect(peer);
+        });
+        peer.socket.on('error', e => console.error('Socket error for', peer.id, e));
         this._keepAlive(peer);
 
         // send displayName
@@ -46,7 +59,7 @@ class SnapdropServer {
     _onHeaders(headers, response) {
         if (response.headers.cookie && response.headers.cookie.indexOf('peerid=') > -1) return;
         response.peerId = Peer.uuid();
-        headers.push('Set-Cookie: peerid=' + response.peerId + "; SameSite=Strict; Secure");
+        headers.push('Set-Cookie: peerid=' + response.peerId + "; SameSite=None; Secure; Path=/");
     }
 
     _onMessage(sender, message) {
@@ -59,6 +72,13 @@ class SnapdropServer {
 
         switch (message.type) {
             case 'disconnect':
+                console.log('Received disconnect from', sender.id);
+                // Voluntary disconnect — cancel any grace timer and remove immediately
+                if (this._disconnectTimers[sender.id]) {
+                    clearTimeout(this._disconnectTimers[sender.id]);
+                    delete this._disconnectTimers[sender.id];
+                }
+                delete this._messageBuffers[sender.id];
                 this._leaveRoom(sender);
                 break;
             case 'pong':
@@ -73,7 +93,17 @@ class SnapdropServer {
             delete message.to;
             // add sender id
             message.sender = sender.id;
-            this._send(recipient, message);
+            if (message.type === 'signal') {
+                const sigType = message.sdp ? 'sdp:' + message.sdp.type : message.ice ? 'ice' : 'other';
+                console.log('Signal', sigType, 'from', sender.id.substring(0,8), 'to', recipientId.substring(0,8), recipient ? (recipient._disconnected ? '(buffered)' : '(live)') : '(not found)');
+            }
+            // If recipient is temporarily disconnected, buffer the message
+            if (recipient && recipient._disconnected) {
+                if (!this._messageBuffers[recipientId]) this._messageBuffers[recipientId] = [];
+                this._messageBuffers[recipientId].push(message);
+            } else {
+                this._send(recipient, message);
+            }
             return;
         }
     }
@@ -84,16 +114,55 @@ class SnapdropServer {
             this._rooms[peer.ip] = {};
         }
 
-        // notify all other peers
+        // If peer with same ID already exists (reconnect), handle gracefully
+        const existingPeer = this._rooms[peer.ip][peer.id];
+        if (existingPeer) {
+            const wasDisconnected = existingPeer._disconnected;
+            this._cancelKeepAlive(existingPeer);
+            existingPeer.socket.removeAllListeners('close');
+            existingPeer.socket.removeAllListeners('message');
+            existingPeer.socket.removeAllListeners('error');
+            existingPeer.socket.terminate();
+            // Cancel grace timer
+            if (this._disconnectTimers[peer.id]) {
+                clearTimeout(this._disconnectTimers[peer.id]);
+                delete this._disconnectTimers[peer.id];
+            }
+            // Replace with new peer in room
+            this._rooms[peer.ip][peer.id] = peer;
+            if (wasDisconnected) {
+                console.log('Peer', peer.id.substring(0,8), 'reconnected within grace period');
+                // Deliver buffered messages
+                if (this._messageBuffers[peer.id]) {
+                    const buffered = this._messageBuffers[peer.id];
+                    delete this._messageBuffers[peer.id];
+                    console.log('Delivering', buffered.length, 'buffered messages to', peer.id.substring(0,8));
+                    buffered.forEach(msg => this._send(peer, msg));
+                }
+                // Send current peers list (without triggering peer-joined on others since they never saw peer-left)
+                const otherPeers = [];
+                for (const otherPeerId in this._rooms[peer.ip]) {
+                    if (otherPeerId === peer.id) continue;
+                    otherPeers.push(this._rooms[peer.ip][otherPeerId].getInfo());
+                }
+                this._send(peer, { type: 'peers', peers: otherPeers });
+                console.log('Room', peer.ip, 'still has', Object.keys(this._rooms[peer.ip]).length, 'peers:', Object.keys(this._rooms[peer.ip]).map(id => id.substring(0,8)).join(', '));
+                return;
+            }
+            delete this._rooms[peer.ip][peer.id];
+        }
+
+        // notify all other peers (skip disconnected ones, they'll get the info on reconnect)
         for (const otherPeerId in this._rooms[peer.ip]) {
             const otherPeer = this._rooms[peer.ip][otherPeerId];
+            if (otherPeer._disconnected) continue;
             this._send(otherPeer, {
                 type: 'peer-joined',
                 peer: peer.getInfo()
             });
         }
 
-        // notify peer about the other peers
+        // notify peer about the other peers (include disconnected ones — they're still "in the room")
         const otherPeers = [];
         for (const otherPeerId in this._rooms[peer.ip]) {
             otherPeers.push(this._rooms[peer.ip][otherPeerId].getInfo());
@@ -106,6 +175,21 @@ class SnapdropServer {
 
         // add peer to room
         this._rooms[peer.ip][peer.id] = peer;
+        console.log('Room', peer.ip, 'now has', Object.keys(this._rooms[peer.ip]).length, 'peers:', Object.keys(this._rooms[peer.ip]).map(id => id.substring(0,8)).join(', '));
+    }
+
+    _onPeerDisconnect(peer) {
+        if (!this._rooms[peer.ip] || !this._rooms[peer.ip][peer.id]) return;
+        // Don't remove from room yet — mark as disconnected and start grace period
+        peer._disconnected = true;
+        this._cancelKeepAlive(peer);
+        console.log('Peer', peer.id.substring(0,8), 'disconnected, starting 15s grace period');
+        this._disconnectTimers[peer.id] = setTimeout(() => {
+            console.log('Grace period expired for', peer.id.substring(0,8), '- removing from room');
+            delete this._disconnectTimers[peer.id];
+            delete this._messageBuffers[peer.id];
+            this._leaveRoom(peer);
+        }, 15000);
     }
 
     _leaveRoom(peer) {
@@ -120,9 +204,10 @@ class SnapdropServer {
         if (!Object.keys(this._rooms[peer.ip]).length) {
             delete this._rooms[peer.ip];
         } else {
-            // notify all other peers
+            // notify all other peers (only connected ones)
             for (const otherPeerId in this._rooms[peer.ip]) {
                 const otherPeer = this._rooms[peer.ip][otherPeerId];
+                if (otherPeer._disconnected) continue;
                 this._send(otherPeer, { type: 'peer-left', peerId: peer.id });
             }
         }
@@ -130,9 +215,11 @@ class SnapdropServer {
 
     _send(peer, message) {
         if (!peer) return;
-        if (this._wss.readyState !== this._wss.OPEN) return;
+        if (peer.socket.readyState !== 1) return; // 1 = WebSocket.OPEN
         message = JSON.stringify(message);
-        peer.socket.send(message, error => '');
+        peer.socket.send(message, error => {
+            if (error) console.error('Send error to', peer.id, error);
+        });
     }
 
     _keepAlive(peer) {
@@ -141,7 +228,9 @@ class SnapdropServer {
         if (!peer.lastBeat) {
             peer.lastBeat = Date.now();
         }
-        if (Date.now() - peer.lastBeat > 2 * timeout) {
+        const timeSinceLastBeat = Date.now() - peer.lastBeat;
+        if (timeSinceLastBeat > 2 * timeout) {
+            console.log('Keep-alive timeout for', peer.id, '- no pong in', timeSinceLastBeat, 'ms');
             this._leaveRoom(peer);
             return;
         }
@@ -182,45 +271,50 @@ class Peer {
     }
 
     _setIP(request) {
-        // Prioritize X-Real-IP, then X-Forwarded-For, then remote address
-        if (request.headers['x-real-ip']) {
-            this.ip = request.headers['x-real-ip'];
-        } else if (request.headers['x-forwarded-for']) {
-            this.ip = request.headers['x-forwarded-for'].split(/\s*,\s*/)[0];
-        } else {
-            this.ip = request.connection.remoteAddress;
-        }
-        
-        // IPv4 and IPv6 use different values to refer to localhost
-        if (this.ip == '::1' || this.ip == '::ffff:127.0.0.1') {
-            this.ip = '127.0.0.1';
-        }
-        
-        // Filter out Docker network IPs (172.x.x.x range)
-        if (this.ip.startsWith('172.') && request.headers['x-forwarded-for']) {
+        const isInternalIP = (ip) => {
+            if (!ip) return true;
+            // Netbird / WireGuard overlay: 100.64.0.0/10 (100.64.x.x - 100.127.x.x)
+            if (ip.startsWith('100.')) {
+                const second = parseInt(ip.split('.')[1], 10);
+                if (second >= 64 && second <= 127) return true;
+            }
+            // Docker / private ranges
+            if (ip.startsWith('172.') || ip.startsWith('192.168.') || ip.startsWith('10.')) return true;
+            // Loopback
+            if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
+            // IPv6-mapped private
+            if (ip.startsWith('::ffff:')) return true;
+            return false;
+        };
+
+        // 1. Try X-Forwarded-For: pick the first public (non-internal) IP
+        if (request.headers['x-forwarded-for']) {
             const forwardedIps = request.headers['x-forwarded-for'].split(/\s*,\s*/);
-            // Find first non-Docker IP
             for (let ip of forwardedIps) {
-                if (!ip.startsWith('172.')) {
+                if (!isInternalIP(ip)) {
                     this.ip = ip;
                     break;
                 }
             }
         }
-        
-        // Normalize all local network IPs to the same identifier
-        // This allows all devices on the local network to see each other
-        
-        // Docker IPs → local-network
-        if (this.ip.startsWith('172.23.') || this.ip.startsWith('172.17.')) {
-            this.ip = 'local-network';
+
+        // 2. Fallback to X-Real-IP if it's public
+        if (!this.ip && request.headers['x-real-ip'] && !isInternalIP(request.headers['x-real-ip'])) {
+            this.ip = request.headers['x-real-ip'];
         }
-        
-        // Private network IPs → local-network
-        // 192.168.x.x, 10.x.x.x, 172.16-31.x.x
-        if (this.ip.startsWith('192.168.') || 
-            this.ip.startsWith('10.') ||
-            (this.ip.startsWith('172.') && !this.ip.startsWith('172.23.') && !this.ip.startsWith('172.17.'))) {
+
+        // 3. Fallback to remote address
+        if (!this.ip) {
+            this.ip = request.connection.remoteAddress;
+        }
+
+        // Normalize IPv6 loopback
+        if (this.ip === '::1' || this.ip === '::ffff:127.0.0.1') {
+            this.ip = '127.0.0.1';
+        }
+
+        // Normalize all internal IPs to 'local-network'
+        if (isInternalIP(this.ip)) {
             this.ip = 'local-network';
         }
         
@@ -230,8 +324,15 @@ class Peer {
     _setPeerId(request) {
         if (request.peerId) {
             this.id = request.peerId;
+        } else if (request.headers.cookie) {
+            const match = request.headers.cookie.match(/peerid=([^;]+)/);
+            if (match) {
+                this.id = match[1];
+            } else {
+                this.id = Peer.uuid();
+            }
         } else {
-            this.id = request.headers.cookie.replace('peerid=', '');
+            this.id = Peer.uuid();
         }
     }
 
