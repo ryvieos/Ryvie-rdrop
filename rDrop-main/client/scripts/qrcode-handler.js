@@ -24,11 +24,20 @@
         }
     }
 
+    // Close QR dialog when it is open
+    function closeQrDialog() {
+        if (qrcodeDialog.hasAttribute('show')) {
+            qrcodeDialog.removeAttribute('show');
+        }
+    }
+
     // Listen to peer events
     if (typeof Events !== 'undefined') {
-        Events.on('peer-joined', () => updateQrButtonVisibility());
+        Events.on('peer-joined', () => { updateQrButtonVisibility(); closeQrDialog(); });
         Events.on('peer-left', () => updateQrButtonVisibility());
-        Events.on('peers', () => updateQrButtonVisibility());
+        Events.on('peers', (e) => { updateQrButtonVisibility(); if (e.detail && e.detail.length > 0) closeQrDialog(); });
+        Events.on('file-received', () => closeQrDialog());
+        Events.on('text-received', () => closeQrDialog());
     }
 
     // Initial check

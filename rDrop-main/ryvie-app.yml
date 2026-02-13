@@ -1,12 +1,30 @@
 manifestVersion: 1
 id: rdrop
-category: sharing
+category: 
+  fr: Partage
+  en: Sharing
 name: rDrop
 version: "0.0.0"
-buildId: 10
+buildId: 12
 port: 8080
-description: >-
-  Ryvie rDrop is a self-hosted file sharing solution that enables users to securely upload,
+description: 
+  fr:
+    "rDrop est une application de partage de fichiers simple et sécurisée qui vous permet de partager des fichiers rapidement et facilement avec d'autres personnes.
+
+    Elle rDrop facilite le partage de fichiers volumineux sans compromettre la sécurité.
+
+    rDrop est conçu pour être simple, sécurisé et efficace — vos fichiers restent sous votre contrôle."
+
+  en:
+    "rDrop is a simple and secure file-sharing application that allows you to share files quickly and easily with others.
+
+    rDrop makes it easy to share large files without compromising security.
+
+    rDrop is designed to be simple, secure, and efficient — your files remain under your control."
+
+tagline: 
+  fr: "Partagez vos fichiers rapidement et en toute sécurité avec rDrop."
+  en: "Share your files quickly and securely with rDrop."
 gallery:
   - icon.png
   - image_1.png
