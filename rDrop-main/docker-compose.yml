@@ -1,24 +1,11 @@
 services:
   node:
-    image: "node:lts-alpine"
-    user: "node"
-    working_dir: /home/node/app
-    volumes:
-      - ${PWD}/server:/home/node/app
-    command: ash -c "npm i && node index.js"
+    image: "ryvie/rdrop-node:latest"
     container_name: app-rdrop-node
     restart: unless-stopped
 
   nginx:
-    build:
-      context: ${PWD}/docker
-      dockerfile: nginx-with-openssl.Dockerfile
-    image: "nginx-with-openssl"
-    volumes:
-      - ${PWD}/client:/usr/share/nginx/html
-      - ${PWD}/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - ${PWD}/docker/certs:/etc/ssl/certs
-      - ${PWD}/docker/openssl:/mnt/openssl
+    image: "ryvie/rdrop-nginx:latest"
     ports:
       - "8080:80"
     env_file: ${PWD}/docker/fqdn.env
