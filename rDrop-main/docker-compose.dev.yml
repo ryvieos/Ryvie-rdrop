@@ -3,7 +3,7 @@ services:
     build:
       context: ${PWD}/server
       dockerfile: Dockerfile
-    image: "ryvie/rdrop-node:dev"
+    image: "julescloud/rdrop-node:dev"
     user: "node"
     working_dir: /home/node/app
     volumes:
@@ -16,7 +16,7 @@ services:
     build:
       context: ${PWD}
       dockerfile: docker/nginx-with-openssl.Dockerfile
-    image: "ryvie/rdrop-nginx:dev"
+    image: "julescloud/rdrop-nginx:dev"
     volumes:
       - ${PWD}/client:/usr/share/nginx/html
       - ${PWD}/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
