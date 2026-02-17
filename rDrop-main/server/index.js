@@ -1,4 +1,6 @@
 var process = require('process')
+var http = require('http');
+var url = require('url');
 // Handle SIGINT
 process.on('SIGINT', () => {
   console.info("SIGINT Received, exiting...")
@@ -17,33 +19,128 @@ const { uniqueNamesGenerator, animals, colors } = require('unique-names-generato
 class SnapdropServer {
 
     constructor(port) {
-        const WebSocket = require('ws');
-        this._wss = new WebSocket.Server({ port: port });
-        this._wss.on('connection', (socket, request) => this._onConnection(new Peer(socket, request)));
-        this._wss.on('headers', (headers, response) => this._onHeaders(headers, response));
-
         this._rooms = {};
+        this._peers = {}; // peerId -> Peer (for POST message routing)
         this._messageBuffers = {}; // peerId -> [messages] for temporarily disconnected peers
         this._disconnectTimers = {}; // peerId -> timer for grace period
 
-        // Protocol-level WebSocket ping to keep connections alive through proxies
-        this._wssPingInterval = setInterval(() => {
-            this._wss.clients.forEach(socket => {
-                if (socket.readyState === 1) socket.ping();
-            });
-        }, 2000);
+        this._httpServer = http.createServer((req, res) => this._onRequest(req, res));
+        this._httpServer.listen(port, () => {
+            console.log('Snapdrop is running on port', port, '(SSE + HTTP POST)');
+        });
 
-        console.log('Snapdrop is running on port', port);
+        // Keep-alive: send SSE comment every 20s to keep connection alive through proxies
+        this._keepAliveInterval = setInterval(() => {
+            for (const peerId in this._peers) {
+                const peer = this._peers[peerId];
+                if (peer && peer.res && !peer._disconnected) {
+                    try { peer.res.write(':keepalive\n\n'); } catch(e) {}
+                }
+            }
+        }, 20000);
+    }
+
+    _onRequest(req, res) {
+        const parsedUrl = url.parse(req.url, true);
+        const pathname = parsedUrl.pathname;
+
+        // CORS headers for all responses
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+        if (req.method === 'OPTIONS') {
+            res.writeHead(200);
+            res.end();
+            return;
+        }
+
+        if (req.method === 'GET' && pathname.startsWith('/server/sse')) {
+            this._handleSSE(req, res);
+        } else if (req.method === 'POST' && pathname === '/server/message') {
+            this._handleMessage(req, res);
+        } else {
+            res.writeHead(404);
+            res.end('Not Found');
+        }
+    }
+
+    _handleSSE(req, res) {
+        // Determine peer ID from cookie or generate new one
+        let peerId = null;
+        let isNewPeer = false;
+        const cookies = req.headers.cookie || '';
+        const match = cookies.match(/peerid=([^;]+)/);
+        if (match) {
+            peerId = match[1];
+        } else {
+            peerId = Peer.uuid();
+            isNewPeer = true;
+        }
+
+        // SSE headers
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            ...(isNewPeer ? { 'Set-Cookie': 'peerid=' + peerId + '; SameSite=None; Secure; Path=/' } : {})
+        });
+        res.flushHeaders();
+
+        // Send initial retry interval
+        res.write('retry: 1000\n\n');
+
+        const rtcSupported = req.url.indexOf('webrtc') > -1;
+        const peer = new Peer(res, req, peerId, rtcSupported);
+        this._onConnection(peer);
+
+        // Handle client disconnect
+        req.on('close', () => {
+            console.log('SSE closed for', peer.id.substring(0,8));
+            this._onPeerDisconnect(peer);
+        });
+    }
+
+    _handleMessage(req, res) {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            // Get peer ID from cookie
+            const cookies = req.headers.cookie || '';
+            const match = cookies.match(/peerid=([^;]+)/);
+            if (!match) {
+                res.writeHead(401);
+                res.end('{"error":"no peer id"}');
+                return;
+            }
+            const peerId = match[1];
+            const peer = this._peers[peerId];
+            if (!peer) {
+                res.writeHead(404);
+                res.end('{"error":"peer not found"}');
+                return;
+            }
+
+            // Update lastBeat on any message
+            peer.lastBeat = Date.now();
+
+            try {
+                const message = JSON.parse(body);
+                this._onMessage(peer, message);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end('{"ok":true}');
+            } catch(e) {
+                res.writeHead(400);
+                res.end('{"error":"invalid json"}');
+            }
+        });
     }
 
     _onConnection(peer) {
+        this._peers[peer.id] = peer;
         this._joinRoom(peer);
-        peer.socket.on('message', message => this._onMessage(peer, message));
-        peer.socket.on('close', (code, reason) => {
-            console.log('Socket closed for', peer.id, 'code:', code, 'reason:', reason ? reason.toString() : 'none');
-            this._onPeerDisconnect(peer);
-        });
-        peer.socket.on('error', e => console.error('Socket error for', peer.id, e));
         this._keepAlive(peer);
 
         // send displayName
@@ -56,20 +153,7 @@ class SnapdropServer {
         });
     }
 
-    _onHeaders(headers, response) {
-        if (response.headers.cookie && response.headers.cookie.indexOf('peerid=') > -1) return;
-        response.peerId = Peer.uuid();
-        headers.push('Set-Cookie: peerid=' + response.peerId + "; SameSite=None; Secure; Path=/");
-    }
-
     _onMessage(sender, message) {
-        // Try to parse message 
-        try {
-            message = JSON.parse(message);
-        } catch (e) {
-            return; // TODO: handle malformed JSON
-        }
-
         switch (message.type) {
             case 'disconnect':
                 console.log('Received disconnect from', sender.id);
@@ -97,10 +181,20 @@ class SnapdropServer {
                 const sigType = message.sdp ? 'sdp:' + message.sdp.type : message.ice ? 'ice' : 'other';
                 console.log('Signal', sigType, 'from', sender.id.substring(0,8), 'to', recipientId.substring(0,8), recipient ? (recipient._disconnected ? '(buffered)' : '(live)') : '(not found)');
             }
+            if (message.type === 'ws-relay') {
+                let info = 'binary';
+                if (message.binary && message.payload) {
+                    info = 'binary:' + message.payload.length + 'chars';
+                } else if (!message.binary && message.payload) {
+                    try { info = JSON.parse(message.payload).type || 'unknown'; } catch(e) { info = 'parse-error'; }
+                }
+                console.log('WS-Relay from', sender.id.substring(0,8), 'to', recipientId.substring(0,8), info, recipient ? (recipient._disconnected ? '(buffered)' : '(live)') : '(not found)');
+            }
             // If recipient is temporarily disconnected, buffer the message
             if (recipient && recipient._disconnected) {
                 if (!this._messageBuffers[recipientId]) this._messageBuffers[recipientId] = [];
-                this._messageBuffers[recipientId].push(message);
+                // Store message with recipient info for proper delivery on reconnect
+                this._messageBuffers[recipientId].push({ message, recipientId });
             } else {
                 this._send(recipient, message);
             }
@@ -119,25 +213,27 @@ class SnapdropServer {
         if (existingPeer) {
             const wasDisconnected = existingPeer._disconnected;
             this._cancelKeepAlive(existingPeer);
-            existingPeer.socket.removeAllListeners('close');
-            existingPeer.socket.removeAllListeners('message');
-            existingPeer.socket.removeAllListeners('error');
-            existingPeer.socket.terminate();
+            // Close old SSE connection
+            try { existingPeer.res.end(); } catch(e) {}
             // Cancel grace timer
             if (this._disconnectTimers[peer.id]) {
                 clearTimeout(this._disconnectTimers[peer.id]);
                 delete this._disconnectTimers[peer.id];
             }
-            // Replace with new peer in room
+            // Replace with new peer in room and peers map
             this._rooms[peer.ip][peer.id] = peer;
+            this._peers[peer.id] = peer;
             if (wasDisconnected) {
                 console.log('Peer', peer.id.substring(0,8), 'reconnected within grace period');
-                // Deliver buffered messages
+                // Deliver buffered messages to their correct recipients
                 if (this._messageBuffers[peer.id]) {
                     const buffered = this._messageBuffers[peer.id];
                     delete this._messageBuffers[peer.id];
                     console.log('Delivering', buffered.length, 'buffered messages to', peer.id.substring(0,8));
-                    buffered.forEach(msg => this._send(peer, msg));
+                    buffered.forEach(item => {
+                        // Send to the reconnected peer (who was the intended recipient)
+                        this._send(peer, item.message);
+                    });
                 }
                 // Send current peers list (without triggering peer-joined on others since they never saw peer-left)
                 const otherPeers = [];
@@ -198,8 +294,9 @@ class SnapdropServer {
 
         // delete the peer
         delete this._rooms[peer.ip][peer.id];
+        delete this._peers[peer.id];
 
-        peer.socket.terminate();
+        try { peer.res.end(); } catch(e) {}
         //if room is empty, delete the room
         if (!Object.keys(this._rooms[peer.ip]).length) {
             delete this._rooms[peer.ip];
@@ -215,29 +312,34 @@ class SnapdropServer {
 
     _send(peer, message) {
         if (!peer) return;
-        if (peer.socket.readyState !== 1) return; // 1 = WebSocket.OPEN
-        message = JSON.stringify(message);
-        peer.socket.send(message, error => {
-            if (error) console.error('Send error to', peer.id, error);
-        });
+        if (peer._disconnected) return;
+        if (!peer.res || peer.res.writableEnded) return;
+        try {
+            const data = JSON.stringify(message);
+            const sseMsg = 'data: ' + data + '\n\n';
+            const ok = peer.res.write(sseMsg);
+            if (!ok) {
+                console.warn('SSE backpressure for', peer.id.substring(0,8), 'msg size:', sseMsg.length);
+            }
+        } catch(e) {
+            console.error('SSE send error to', peer.id, e.message);
+        }
     }
 
     _keepAlive(peer) {
         this._cancelKeepAlive(peer);
-        var timeout = 30000;
-        if (!peer.lastBeat) {
-            peer.lastBeat = Date.now();
-        }
-        const timeSinceLastBeat = Date.now() - peer.lastBeat;
-        if (timeSinceLastBeat > 2 * timeout) {
-            console.log('Keep-alive timeout for', peer.id, '- no pong in', timeSinceLastBeat, 'ms');
-            this._leaveRoom(peer);
-            return;
-        }
-
-        this._send(peer, { type: 'ping' });
-
-        peer.timerId = setTimeout(() => this._keepAlive(peer), timeout);
+        // With SSE, connection closure is detected by req.on('close').
+        // This timer is a safety net for stale peers whose SSE close event was missed.
+        var timeout = 120000; // 2 minutes
+        peer.timerId = setTimeout(() => {
+            if (peer._disconnected) return;
+            if (peer.res && peer.res.writableEnded) {
+                console.log('Keep-alive: SSE ended for', peer.id.substring(0,8), '- cleaning up');
+                this._onPeerDisconnect(peer);
+            } else {
+                this._keepAlive(peer); // reschedule
+            }
+        }, timeout);
     }
 
     _cancelKeepAlive(peer) {
@@ -251,18 +353,17 @@ class SnapdropServer {
 
 class Peer {
 
-    constructor(socket, request) {
-        // set socket
-        this.socket = socket;
-
+    constructor(res, request, peerId, rtcSupported) {
+        // set SSE response
+        this.res = res;
 
         // set remote ip
         this._setIP(request);
 
         // set peer id
-        this._setPeerId(request)
+        this.id = peerId;
         // is WebRTC supported ?
-        this.rtcSupported = request.url.indexOf('webrtc') > -1;
+        this.rtcSupported = rtcSupported;
         // set name 
         this._setName(request);
         // for keepalive
@@ -319,21 +420,6 @@ class Peer {
         }
         
         console.log('Peer connected - IP:', this.ip, 'X-Real-IP:', request.headers['x-real-ip'], 'X-Forwarded-For:', request.headers['x-forwarded-for'], 'Remote:', request.connection.remoteAddress);
-    }
-
-    _setPeerId(request) {
-        if (request.peerId) {
-            this.id = request.peerId;
-        } else if (request.headers.cookie) {
-            const match = request.headers.cookie.match(/peerid=([^;]+)/);
-            if (match) {
-                this.id = match[1];
-            } else {
-                this.id = Peer.uuid();
-            }
-        } else {
-            this.id = Peer.uuid();
-        }
     }
 
     toString() {

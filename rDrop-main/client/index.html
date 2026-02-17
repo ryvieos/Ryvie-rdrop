@@ -37,6 +37,23 @@
 </head>
 
 <body translate="no">
+    <script>
+    // Force clear all service workers and caches (one-time)
+    if (!sessionStorage.getItem('sw-cleared-v20')) {
+        sessionStorage.setItem('sw-cleared-v20', '1');
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                registrations.forEach(function(reg) { reg.unregister(); });
+            });
+        }
+        if ('caches' in window) {
+            caches.keys().then(function(names) {
+                names.forEach(function(name) { caches.delete(name); });
+            });
+        }
+        setTimeout(function() { location.reload(true); }, 500);
+    }
+    </script>
     <header class="row-reverse">
         <a href="#about" class="icon-button" data-i18n-title="header.about" title="À propos de rDrop">
             <svg class="icon">
@@ -72,6 +89,24 @@
         <div id="displayName" data-i18n-placeholder="main.placeholder" placeholder="Le moyen le plus simple de transférer des données entre appareils"></div>
         <div class="font-body2" data-i18n="main.network_info">Vous pouvez être découvert par tous sur ce réseau</div>
     </footer>
+    <!-- Send Progress Dialog -->
+    <x-dialog id="sendDialog">
+        <x-background class="full center">
+            <x-paper shadow="2">
+                <h3>Envoi en cours</h3>
+                <div id="sendProgressInfo" class="send-progress-info">
+                    <div class="send-progress-bar-container">
+                        <div id="sendProgressBar" class="send-progress-bar"></div>
+                    </div>
+                    <div id="sendProgressText" class="send-progress-text">0%</div>
+                    <div id="sendFileName" class="send-file-name"></div>
+                </div>
+                <div class="row-reverse">
+                    <button class="button" id="sendDialogClose" close>Fermer</button>
+                </div>
+            </x-paper>
+        </x-background>
+    </x-dialog>
     <!-- Receive Dialog -->
     <x-dialog id="receiveDialog">
         <x-background class="full center">
