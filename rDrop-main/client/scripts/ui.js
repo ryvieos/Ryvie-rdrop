@@ -256,11 +256,33 @@ class SendDialog extends Dialog {
         this._progressText = this.$el.querySelector('#sendProgressText');
         this._fileName = this.$el.querySelector('#sendFileName');
         this._title = this.$el.querySelector('h3');
+        this._closeBtn = this.$el.querySelector('#sendDialogClose');
+        this._transferring = false;
+        this._closeBtn.addEventListener('click', () => {
+            if (this._transferring) {
+                Events.fire('cancel-transfer');
+                this._transferring = false;
+                this._title.textContent = 'Envoi arrêté';
+                this._closeBtn.textContent = 'Fermer';
+                setTimeout(() => this.hide(), 1500);
+            } else {
+                this.hide();
+            }
+        });
         Events.on('send-progress', e => this._onProgress(e.detail));
+        Events.on('transfer-cancelled', () => {
+            if (!this._transferring) return;
+            this._transferring = false;
+            this._title.textContent = 'Envoi arrêté';
+            this._closeBtn.textContent = 'Fermer';
+            setTimeout(() => this.hide(), 1500);
+        });
     }
 
     _onProgress(detail) {
         if (detail.allComplete) {
+            this._transferring = false;
+            this._closeBtn.textContent = 'Fermer';
             this._title.textContent = 'Envoi terminé';
             this._progressBar.style.width = '100%';
             this._progressText.textContent = '100%';
@@ -268,10 +290,10 @@ class SendDialog extends Dialog {
             setTimeout(() => this.hide(), 3000);
             return;
         }
-        if (detail.done) {
-            // File complete but more files to send - don't close dialog
-            return;
-        }
+        if (detail.done) return;
+
+        this._transferring = true;
+        this._closeBtn.textContent = 'Annuler';
         const pct = Math.round(detail.progress * 100);
         this._progressBar.style.width = pct + '%';
         this._progressText.textContent = pct + '%';
@@ -282,6 +304,12 @@ class SendDialog extends Dialog {
         }
         this._title.textContent = 'Envoi en cours';
         this.show();
+    }
+
+    hide() {
+        this._transferring = false;
+        this._closeBtn.textContent = 'Fermer';
+        super.hide();
     }
 
     _formatSize(bytes) {
@@ -300,12 +328,22 @@ class ReceiveDialog extends Dialog {
             this._addFile(e.detail);
             window.blop.play();
         });
+        Events.on('transfer-cancelled', () => this._onTransferCancelled());
         Events.on('transfer-start', e => {
+            this._senderPeerId = e.detail.sender;
             this._startNewTransfer(e.detail.totalFiles);
         });
         this._filesQueue = [];
+        this._senderPeerId = null;
         this._downloadAllButton = this.$el.querySelector('#downloadAll');
         this._downloadAllButton.addEventListener('click', () => this._downloadAllFiles());
+        this._closeBtn = this.$el.querySelector('#receiveDialogClose');
+        this._closeBtn.addEventListener('click', () => {
+            if (this._isTransferActive && this._senderPeerId) {
+                Events.fire('cancel-transfer-receive', this._senderPeerId);
+            }
+            this.hide();
+        });
         this._filesList = this.$el.querySelector('#filesList');
         this._loadingIndicator = this.$el.querySelector('#loadingIndicator');
         this._loadingTimeout = null;
@@ -418,6 +456,21 @@ class ReceiveDialog extends Dialog {
                 this._loadingIndicator.style.display = 'none';
             }, 1000);
         }
+    }
+
+    _onTransferCancelled() {
+        if (!this._isTransferActive) return;
+        this._isTransferActive = false;
+        if (this._loadingIndicator) {
+            this._loadingIndicator.style.display = 'block';
+            const loadingText = this._loadingIndicator.querySelector('.loading-text');
+            if (loadingText) loadingText.textContent = 'Transfert arrêté';
+            setTimeout(() => {
+                this._loadingIndicator.style.display = 'none';
+            }, 2000);
+        }
+        const $title = this.$el.querySelector('h3');
+        $title.textContent = 'Transfert arrêté';
     }
 
     _displayFile(file) {

@@ -4,16 +4,10 @@ window.isRtcSupported = !!(window.RTCPeerConnection || window.mozRTCPeerConnecti
 class ServerConnection {
 
     constructor() {
-        this._connected = false;
-        this._connecting = false;
         this._silentReconnect = false;
         this._disconnectedSince = null;
         this._gracePeriod = 8000; // ms before showing "Connection lost"
         this._graceTimer = null;
-        this._sendBuffer = [];
-        this._postQueue = [];
-        this._posting = false;
-        this._postEndpoint = this._baseUrl() + '/server/message';
         this._connect();
         Events.on('beforeunload', e => this._disconnect());
         Events.on('pagehide', e => this._disconnect());
@@ -22,25 +16,25 @@ class ServerConnection {
 
     _connect() {
         clearTimeout(this._reconnectTimer);
-        if (this._connected || this._connecting) return;
-        this._connecting = true;
-        // Close old EventSource if any
-        if (this._sse) {
-            this._sse.onopen = null;
-            this._sse.onmessage = null;
-            this._sse.onerror = null;
-            this._sse.close();
+        if (this._isConnected() || this._isConnecting()) return;
+        // Detach old socket handlers to prevent ghost disconnects
+        if (this._socket) {
+            this._socket.onclose = null;
+            this._socket.onerror = null;
+            this._socket.onmessage = null;
         }
-        const sse = new EventSource(this._sseEndpoint(), { withCredentials: true });
-        sse.onopen = () => this._onConnect();
-        sse.onmessage = e => this._onMessage(e.data);
-        sse.onerror = e => this._onDisconnect();
-        this._sse = sse;
+        const ws = new WebSocket(this._endpoint());
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = e => this._onConnect();
+        ws.onmessage = e => this._onMessage(e.data);
+        ws.onclose = e => this._onDisconnect();
+        ws.onerror = e => console.error(e);
+        this._socket = ws;
     }
 
-    _onMessage(data) {
-        const msg = JSON.parse(data);
-        if (msg.type !== 'ws-relay') console.log('SSE:', msg);
+    _onMessage(msg) {
+        msg = JSON.parse(msg);
+        if (msg.type !== 'ws-relay') console.log('WS:', msg);
         switch (msg.type) {
             case 'peers':
                 Events.fire('peers', msg.peers);
@@ -54,6 +48,9 @@ class ServerConnection {
             case 'signal':
                 Events.fire('signal', msg);
                 break;
+            case 'ping':
+                this.send({ type: 'pong' });
+                break;
             case 'ws-relay':
                 Events.fire('ws-relay', msg);
                 break;
@@ -61,118 +58,45 @@ class ServerConnection {
                 Events.fire('display-name', msg);
                 break;
             default:
-                console.error('SSE: unknown message type', msg);
+                console.error('WS: unknown message type', msg);
         }
     }
 
     send(message) {
-        if (!this._connected) {
-            this._sendBuffer.push(message);
-            return;
-        }
-        this._enqueue(message);
+        if (!this._isConnected()) return;
+        this._socket.send(JSON.stringify(message));
     }
 
-    _enqueue(message) {
-        this._postQueue.push(message);
-        if (!this._posting) {
-            this._processQueue();
-        }
-    }
-
-    _processQueue() {
-        if (this._postQueue.length === 0) {
-            this._posting = false;
-            return;
-        }
-        this._posting = true;
-        const message = this._postQueue.shift();
-        this._post(message, 0);
-    }
-
-    _post(message, retries) {
-        const maxRetries = 3;
-        fetch(this._postEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(message),
-            credentials: 'include'
-        }).then(response => {
-            if (!response.ok) {
-                throw new Error('HTTP ' + response.status);
-            }
-            // Success — send next message in queue
-            this._processQueue();
-        }).catch(e => {
-            if (retries < maxRetries) {
-                const delay = Math.min(1000 * Math.pow(2, retries), 4000);
-                console.warn('POST retry', retries + 1, '/', maxRetries, 'in', delay, 'ms:', e.message);
-                setTimeout(() => this._post(message, retries + 1), delay);
-            } else {
-                console.error('POST failed after', maxRetries, 'retries:', e.message);
-                // Skip this message and continue queue
-                this._processQueue();
-            }
-        });
-    }
-
-    _flushBuffer() {
-        clearTimeout(this._flushTimer);
-        while (this._sendBuffer.length > 0 && this._connected) {
-            const msg = this._sendBuffer.shift();
-            this._enqueue(msg);
-        }
-    }
-
-    _scheduleFlush() {
-        clearTimeout(this._flushTimer);
-        this._flushTimer = setTimeout(() => {
-            if (this._connected && this._sendBuffer.length > 0) {
-                this._flushBuffer();
-            }
-        }, 5000);
-    }
-
-    _baseUrl() {
-        return location.protocol + '//' + location.host + location.pathname.replace(/\/$/, '');
-    }
-
-    _sseEndpoint() {
+    _endpoint() {
+        const protocol = location.protocol.startsWith('https') ? 'wss' : 'ws';
         const webrtc = window.isRtcSupported ? '/webrtc' : '/fallback';
-        return this._baseUrl() + '/server/sse' + webrtc;
+        const url = protocol + '://' + location.host + location.pathname + 'server' + webrtc;
+        return url;
     }
 
     _disconnect() {
-        this._post({ type: 'disconnect' });
-        if (this._sse) {
-            this._sse.onopen = null;
-            this._sse.onmessage = null;
-            this._sse.onerror = null;
-            this._sse.close();
-        }
-        this._connected = false;
-        this._connecting = false;
+        this.send({ type: 'disconnect' });
+        this._socket.onclose = null;
+        this._socket.close();
     }
 
     _onDisconnect() {
-        if (!this._connected && !this._connecting) return; // already handled
-        console.log('SSE: server disconnected');
-        this._connected = false;
-        this._connecting = false;
+        console.log('WS: server disconnected');
         Events.fire('ws-disconnected');
         clearTimeout(this._reconnectTimer);
         if (!this._disconnectedSince) {
             this._disconnectedSince = Date.now();
             this._silentReconnect = true;
+            // Start grace period — only show notification if still disconnected after delay
             this._graceTimer = setTimeout(() => {
-                if (!this._connected) {
+                if (!this._isConnected()) {
                     this._silentReconnect = false;
                     Events.fire('notify-user', 'Connection lost. Reconnecting...');
                 }
             }, this._gracePeriod);
         }
-        // EventSource auto-reconnects, but we also set a manual fallback
-        this._reconnectTimer = setTimeout(() => this._connect(), 2000);
+        // Reconnect quickly and silently
+        this._reconnectTimer = setTimeout(_ => this._connect(), 1000);
     }
 
     _onVisibilityChange() {
@@ -181,19 +105,16 @@ class ServerConnection {
     }
 
     _isConnected() {
-        return this._connected;
+        return this._socket && this._socket.readyState === this._socket.OPEN;
     }
 
     _onConnect() {
-        console.log('SSE: server connected');
-        this._connected = true;
-        this._connecting = false;
+        console.log('WS: server connected');
         clearTimeout(this._graceTimer);
-        this._flushBuffer();
         Events.fire('ws-connected');
         if (this._disconnectedSince) {
             const downtime = Date.now() - this._disconnectedSince;
-            console.log('SSE: reconnected after', downtime, 'ms');
+            console.log('WS: reconnected after', downtime, 'ms');
             if (!this._silentReconnect) {
                 Events.fire('notify-user', 'Reconnected.');
             }
@@ -203,7 +124,7 @@ class ServerConnection {
     }
 
     _isConnecting() {
-        return this._connecting;
+        return this._socket && this._socket.readyState === this._socket.CONNECTING;
     }
 }
 
@@ -262,7 +183,20 @@ class Peer {
         this._sendFile(file);
     }
 
+    cancelTransfer() {
+        this._aborted = true;
+        this._filesQueue = [];
+        if (this._chunker) { this._chunker.abort(); this._chunker = null; }
+        this._busy = false;
+        this._currentFile = null;
+        this._totalFiles = 0;
+        this._currentFileIndex = 0;
+        Events.fire('file-progress', { sender: this._peerId, progress: 1 });
+        this.sendJSON({ type: 'transfer-cancelled' });
+    }
+
     _sendFile(file) {
+        this._aborted = false;
         console.log('Peer: sending file', file.name, 'size:', file.size, 'type:', file.type);
         this._currentFile = file;
         this._chunkSeq = 0;
@@ -363,6 +297,9 @@ class Peer {
             case 'transfer-start':
                 this._onTransferStart(message);
                 break;
+            case 'transfer-cancelled':
+                this._onTransferCancelled();
+                break;
         }
     }
 
@@ -426,6 +363,19 @@ class Peer {
 
     _onTransferStart(message) {
         Events.fire('transfer-start', { sender: this._peerId, totalFiles: message.totalFiles });
+    }
+
+    _onTransferCancelled() {
+        if (this._busy) {
+            this._aborted = true;
+            this._filesQueue = [];
+            if (this._chunker) { this._chunker.abort(); this._chunker = null; }
+            this._busy = false;
+            this._currentFile = null;
+        }
+        this._digester = null;
+        Events.fire('file-progress', { sender: this._peerId, progress: 1 });
+        Events.fire('transfer-cancelled', { sender: this._peerId });
     }
 
     sendText(text) {
@@ -687,6 +637,8 @@ class PeersManager {
         Events.on('send-text', e => this._onSendText(e.detail));
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
         Events.on('rtc-fallback', e => this._onRtcFallback(e.detail));
+        Events.on('cancel-transfer', _ => this._onCancelTransfer());
+        Events.on('cancel-transfer-receive', e => this._onCancelTransferFromReceiver(e.detail));
     }
 
     _onMessage(message) {
@@ -748,6 +700,20 @@ class PeersManager {
             this.peers[message.to] = new WSPeer(this._server, message.to);
         }
         this.peers[message.to].sendText(message.text);
+    }
+
+    _onCancelTransfer() {
+        Object.values(this.peers).forEach(peer => {
+            if (peer._busy) peer.cancelTransfer();
+        });
+    }
+
+    _onCancelTransferFromReceiver(senderPeerId) {
+        const peer = this.peers[senderPeerId];
+        if (!peer) return;
+        peer._digester = null;
+        Events.fire('file-progress', { sender: senderPeerId, progress: 1 });
+        peer.sendJSON({ type: 'transfer-cancelled' });
     }
 
     _onPeerLeft(peerId) {
@@ -837,8 +803,8 @@ class WSPeer extends Peer {
 class FileChunker {
 
     constructor(file, onChunk, onPartitionEnd, isConnected) {
-        this._chunkSize = 16000; // 16 KB — kept small for base64-over-SSE (~22KB per message)
-        this._maxPartitionSize = 256000; // 256 KB
+        this._chunkSize = 64000; // 64 KB
+        this._maxPartitionSize = 1e6; // 1 MB
         this._offset = 0;
         this._partitionSize = 0;
         this._file = file;
@@ -866,7 +832,14 @@ class FileChunker {
         this._reader.readAsArrayBuffer(chunk);
     }
 
+    abort() {
+        this._aborted = true;
+        clearTimeout(this._waitRetry);
+        try { this._reader.abort(); } catch(e) {}
+    }
+
     _onChunkRead(chunk) {
+        if (this._aborted) return;
         this._offset += chunk.byteLength;
         this._partitionSize += chunk.byteLength;
         this._onChunk(chunk);
