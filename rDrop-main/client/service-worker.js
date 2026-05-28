@@ -1,4 +1,4 @@
-var CACHE_NAME = 'snapdrop-cache-v5';
+var CACHE_NAME = 'snapdrop-cache-v11';
 var urlsToCache = [
   'index.html',
   './',
@@ -11,7 +11,8 @@ var urlsToCache = [
 ];
 
 self.addEventListener('install', function(event) {
-  // Perform install steps
+  // Skip waiting to activate immediately
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(function(cache) {
@@ -23,34 +24,50 @@ self.addEventListener('install', function(event) {
 
 
 self.addEventListener('fetch', function(event) {
+  // Skip caching for non-GET requests (POST, etc.) and server API endpoints
+  var url = new URL(event.request.url);
+  var skipCache = event.request.method !== 'GET' || url.pathname.startsWith('/server');
+  
+  if (skipCache) {
+    // Just fetch without caching
+    event.respondWith(fetch(event.request));
+    return;
+  }
+  
+  // Network-first strategy: always try network, fall back to cache
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then(function(response) {
-        // Cache hit - return response
-        if (response) {
-          return response;
+        // Update cache with fresh response
+        if (response.ok && response.status !== 206) {
+          var responseClone = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(event.request, responseClone);
+          });
         }
-        return fetch(event.request);
-      }
-    )
+        return response;
+      })
+      .catch(function() {
+        return caches.match(event.request);
+      })
   );
 });
 
 
 self.addEventListener('activate', function(event) {
   console.log('Updating Service Worker...')
+  // Claim all clients immediately
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(
         cacheNames.filter(function(cacheName) {
-          // Return true if you want to remove this cache,
-          // but remember that caches are shared across
-          // the whole origin
-          return true
+          return cacheName !== CACHE_NAME;
         }).map(function(cacheName) {
           return caches.delete(cacheName);
         })
       );
+    }).then(function() {
+      return self.clients.claim();
     })
   );
 });

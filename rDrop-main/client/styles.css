@@ -893,3 +893,41 @@ x-dialog x-paper {
     font-size: 0.9em;
     margin-left: 8px;
 }
+
+/* Send Progress Dialog */
+.send-progress-info {
+    padding: 16px;
+    margin: 16px 0;
+}
+
+.send-progress-bar-container {
+    width: 100%;
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.send-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #3367d6;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.send-progress-text {
+    font-size: 18px;
+    font-weight: 500;
+    color: #3367d6;
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+.send-file-name {
+    font-size: 14px;
+    color: #666;
+    text-align: center;
+    word-break: break-all;
+}

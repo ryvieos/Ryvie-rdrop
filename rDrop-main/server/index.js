@@ -63,7 +63,7 @@ class SnapdropServer {
     }
 
     _onMessage(sender, message) {
-        // Try to parse message 
+        // Try to parse message
         try {
             message = JSON.parse(message);
         } catch (e) {
@@ -96,6 +96,15 @@ class SnapdropServer {
             if (message.type === 'signal') {
                 const sigType = message.sdp ? 'sdp:' + message.sdp.type : message.ice ? 'ice' : 'other';
                 console.log('Signal', sigType, 'from', sender.id.substring(0,8), 'to', recipientId.substring(0,8), recipient ? (recipient._disconnected ? '(buffered)' : '(live)') : '(not found)');
+            }
+            if (message.type === 'ws-relay') {
+                let info = 'text';
+                if (message.binary && message.payload) {
+                    info = 'binary:' + message.payload.length + 'chars';
+                } else if (!message.binary && message.payload) {
+                    try { info = JSON.parse(message.payload).type || 'unknown'; } catch(e) { info = 'parse-error'; }
+                }
+                console.log('WS-Relay from', sender.id.substring(0,8), 'to', recipientId.substring(0,8), info, recipient ? (recipient._disconnected ? '(buffered)' : '(live)') : '(not found)');
             }
             // If recipient is temporarily disconnected, buffer the message
             if (recipient && recipient._disconnected) {
@@ -263,7 +272,7 @@ class Peer {
         this._setPeerId(request)
         // is WebRTC supported ?
         this.rtcSupported = request.url.indexOf('webrtc') > -1;
-        // set name 
+        // set name
         this._setName(request);
         // for keepalive
         this.timerId = 0;
@@ -317,7 +326,7 @@ class Peer {
         if (isInternalIP(this.ip)) {
             this.ip = 'local-network';
         }
-        
+
         console.log('Peer connected - IP:', this.ip, 'X-Real-IP:', request.headers['x-real-ip'], 'X-Forwarded-For:', request.headers['x-forwarded-for'], 'Remote:', request.connection.remoteAddress);
     }
 
@@ -345,11 +354,11 @@ class Peer {
 
 
         let deviceName = '';
-        
+
         if (ua.os && ua.os.name) {
             deviceName = ua.os.name.replace('Mac OS', 'Mac') + ' ';
         }
-        
+
         if (ua.device.model) {
             deviceName += ua.device.model;
         } else {

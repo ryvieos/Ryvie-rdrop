@@ -248,6 +248,78 @@ class Dialog {
     }
 }
 
+class SendDialog extends Dialog {
+
+    constructor() {
+        super('sendDialog');
+        this._progressBar = this.$el.querySelector('#sendProgressBar');
+        this._progressText = this.$el.querySelector('#sendProgressText');
+        this._fileName = this.$el.querySelector('#sendFileName');
+        this._title = this.$el.querySelector('h3');
+        this._closeBtn = this.$el.querySelector('#sendDialogClose');
+        this._transferring = false;
+        this._closeBtn.addEventListener('click', () => {
+            if (this._transferring) {
+                Events.fire('cancel-transfer');
+                this._transferring = false;
+                this._title.textContent = 'Envoi arrêté';
+                this._closeBtn.textContent = 'Fermer';
+                setTimeout(() => this.hide(), 1500);
+            } else {
+                this.hide();
+            }
+        });
+        Events.on('send-progress', e => this._onProgress(e.detail));
+        Events.on('transfer-cancelled', () => {
+            if (!this._transferring) return;
+            this._transferring = false;
+            this._title.textContent = 'Envoi arrêté';
+            this._closeBtn.textContent = 'Fermer';
+            setTimeout(() => this.hide(), 1500);
+        });
+    }
+
+    _onProgress(detail) {
+        if (detail.allComplete) {
+            this._transferring = false;
+            this._closeBtn.textContent = 'Fermer';
+            this._title.textContent = 'Envoi terminé';
+            this._progressBar.style.width = '100%';
+            this._progressText.textContent = '100%';
+            this._fileName.textContent = 'Tous les fichiers envoyés';
+            setTimeout(() => this.hide(), 3000);
+            return;
+        }
+        if (detail.done) return;
+
+        this._transferring = true;
+        this._closeBtn.textContent = 'Annuler';
+        const pct = Math.round(detail.progress * 100);
+        this._progressBar.style.width = pct + '%';
+        this._progressText.textContent = pct + '%';
+        if (detail.name) {
+            const sizeStr = detail.size ? ' (' + this._formatSize(detail.size) + ')' : '';
+            const fileCount = detail.totalFiles > 1 ? ' [' + detail.fileIndex + '/' + detail.totalFiles + ']' : '';
+            this._fileName.textContent = detail.name + sizeStr + fileCount;
+        }
+        this._title.textContent = 'Envoi en cours';
+        this.show();
+    }
+
+    hide() {
+        this._transferring = false;
+        this._closeBtn.textContent = 'Fermer';
+        super.hide();
+    }
+
+    _formatSize(bytes) {
+        if (bytes >= 1e9) return (Math.round(bytes / 1e8) / 10) + ' GB';
+        if (bytes >= 1e6) return (Math.round(bytes / 1e5) / 10) + ' MB';
+        if (bytes > 1000) return Math.round(bytes / 1000) + ' KB';
+        return bytes + ' Bytes';
+    }
+}
+
 class ReceiveDialog extends Dialog {
 
     constructor() {
@@ -256,12 +328,22 @@ class ReceiveDialog extends Dialog {
             this._addFile(e.detail);
             window.blop.play();
         });
+        Events.on('transfer-cancelled', () => this._onTransferCancelled());
         Events.on('transfer-start', e => {
+            this._senderPeerId = e.detail.sender;
             this._startNewTransfer(e.detail.totalFiles);
         });
         this._filesQueue = [];
+        this._senderPeerId = null;
         this._downloadAllButton = this.$el.querySelector('#downloadAll');
         this._downloadAllButton.addEventListener('click', () => this._downloadAllFiles());
+        this._closeBtn = this.$el.querySelector('#receiveDialogClose');
+        this._closeBtn.addEventListener('click', () => {
+            if (this._isTransferActive && this._senderPeerId) {
+                Events.fire('cancel-transfer-receive', this._senderPeerId);
+            }
+            this.hide();
+        });
         this._filesList = this.$el.querySelector('#filesList');
         this._loadingIndicator = this.$el.querySelector('#loadingIndicator');
         this._loadingTimeout = null;
@@ -285,6 +367,8 @@ class ReceiveDialog extends Dialog {
                 loadingText.textContent = `Transfert en cours (0/${totalFiles})...`;
             }
         }
+        // Show dialog immediately so user sees transfer progress
+        this.show();
     }
 
     _addFile(file) {
@@ -374,7 +458,24 @@ class ReceiveDialog extends Dialog {
         }
     }
 
+    _onTransferCancelled() {
+        if (!this._isTransferActive) return;
+        this._isTransferActive = false;
+        if (this._loadingIndicator) {
+            this._loadingIndicator.style.display = 'block';
+            const loadingText = this._loadingIndicator.querySelector('.loading-text');
+            if (loadingText) loadingText.textContent = 'Transfert arrêté';
+            setTimeout(() => {
+                this._loadingIndicator.style.display = 'none';
+            }, 2000);
+        }
+        const $title = this.$el.querySelector('h3');
+        $title.textContent = 'Transfert arrêté';
+    }
+
     _displayFile(file) {
+        console.log('Displaying file:', file.name, 'mime:', file.mime, 'size:', file.size);
+        
         const fileItem = document.createElement('div');
         fileItem.className = 'file-item';
 
@@ -398,9 +499,16 @@ class ReceiveDialog extends Dialog {
         fileInfo.appendChild(fileSize);
         fileItem.appendChild(fileInfo);
 
-        if (file.mime && file.mime.split('/')[0] === 'image') {
+        // Check if it's an image by mime type OR file extension
+        const isImageMime = file.mime && file.mime.split('/')[0] === 'image';
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif'];
+        const isImageExt = imageExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+        
+        if (isImageMime || isImageExt) {
+            console.log('Creating image preview for:', file.name);
             const img = document.createElement('img');
             img.src = URL.createObjectURL(file.blob);
+            img.onerror = () => console.error('Failed to load image:', file.name);
             fileItem.insertBefore(img, fileInfo);
         }
 
@@ -692,6 +800,7 @@ class Snapdrop {
         const peers = new PeersManager(server);
         const peersUI = new PeersUI();
         Events.on('load', e => {
+            const sendDialog = new SendDialog();
             const receiveDialog = new ReceiveDialog();
             const sendTextDialog = new SendTextDialog();
             const receiveTextDialog = new ReceiveTextDialog();
@@ -790,72 +899,6 @@ Events.on('load', () => {
     init();
     animate();
 });
-const peerFileManager = new PeerFileManager();
-
-class PeerFileManager {
-    constructor() {
-        this.receivedFiles = [];
-        Events.on('file-received', e => this.addFile(e.detail));
-    }
-
-    addFile(fileDetail) {
-        this.receivedFiles.push(fileDetail);
-        this.displayFile(fileDetail);
-    }
-
-    displayFile(fileDetail) {
-        const container = document.getElementById('received-files');
-        const file = fileDetail.blob;
-        const url = URL.createObjectURL(file);
-
-        const fileContainer = document.createElement('div');
-
-        if (file.type.startsWith('image')) {
-            const img = document.createElement('img');
-            img.src = url;
-            img.classList.add('preview-image');
-            fileInfo.appendChild(img);
-        }
-
-        const fileInfo = document.createElement('p');
-        fileInfo.className = 'file-info';
-
-        const fileName = document.createElement('div');
-        fileName.className = 'file-name';
-        fileName.textContent = `${fileDetail.name} (${this.formatSize(fileDetail.size)})`;
-        fileInfo.appendChild(fileName);
-        document.getElementById('received-files').appendChild(fileInfo);
-    }
-
-    downloadAllFiles() {
-        const zip = new JSZip();
-        this.receivedFiles.forEach(fileDetail => {
-            zip.file(fileDetail.name, fileDetail.blob);
-        });
-
-        zip.generateAsync({type: "blob"}).then(content => {
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(content);
-            link.download = "photos.zip";
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        });
-    }
-
-    formatSize(bytes) {
-        if (bytes >= 1e9) {
-            return (Math.round(bytes / 1e8) / 10) + ' GB';
-        } else if (bytes >= 1e6) {
-            return (Math.round(bytes / 1e5) / 10) + ' MB';
-        } else if (bytes > 1000) {
-            return Math.round(bytes / 1000) + ' KB';
-        } else {
-            return bytes + ' Bytes';
-        }
-    }
-}
-
 Notifications.PERMISSION_ERROR = `
 Notifications permission has been blocked
 as the user has dismissed the permission prompt several times.
