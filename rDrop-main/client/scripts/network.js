@@ -183,7 +183,20 @@ class Peer {
         this._sendFile(file);
     }
 
+    cancelTransfer() {
+        this._aborted = true;
+        this._filesQueue = [];
+        if (this._chunker) { this._chunker.abort(); this._chunker = null; }
+        this._busy = false;
+        this._currentFile = null;
+        this._totalFiles = 0;
+        this._currentFileIndex = 0;
+        Events.fire('file-progress', { sender: this._peerId, progress: 1 });
+        this.sendJSON({ type: 'transfer-cancelled' });
+    }
+
     _sendFile(file) {
+        this._aborted = false;
         console.log('Peer: sending file', file.name, 'size:', file.size, 'type:', file.type);
         this._currentFile = file;
         this._chunkSeq = 0;
@@ -284,6 +297,9 @@ class Peer {
             case 'transfer-start':
                 this._onTransferStart(message);
                 break;
+            case 'transfer-cancelled':
+                this._onTransferCancelled();
+                break;
         }
     }
 
@@ -347,6 +363,19 @@ class Peer {
 
     _onTransferStart(message) {
         Events.fire('transfer-start', { sender: this._peerId, totalFiles: message.totalFiles });
+    }
+
+    _onTransferCancelled() {
+        if (this._busy) {
+            this._aborted = true;
+            this._filesQueue = [];
+            if (this._chunker) { this._chunker.abort(); this._chunker = null; }
+            this._busy = false;
+            this._currentFile = null;
+        }
+        this._digester = null;
+        Events.fire('file-progress', { sender: this._peerId, progress: 1 });
+        Events.fire('transfer-cancelled', { sender: this._peerId });
     }
 
     sendText(text) {
@@ -608,6 +637,8 @@ class PeersManager {
         Events.on('send-text', e => this._onSendText(e.detail));
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
         Events.on('rtc-fallback', e => this._onRtcFallback(e.detail));
+        Events.on('cancel-transfer', _ => this._onCancelTransfer());
+        Events.on('cancel-transfer-receive', e => this._onCancelTransferFromReceiver(e.detail));
     }
 
     _onMessage(message) {
@@ -669,6 +700,20 @@ class PeersManager {
             this.peers[message.to] = new WSPeer(this._server, message.to);
         }
         this.peers[message.to].sendText(message.text);
+    }
+
+    _onCancelTransfer() {
+        Object.values(this.peers).forEach(peer => {
+            if (peer._busy) peer.cancelTransfer();
+        });
+    }
+
+    _onCancelTransferFromReceiver(senderPeerId) {
+        const peer = this.peers[senderPeerId];
+        if (!peer) return;
+        peer._digester = null;
+        Events.fire('file-progress', { sender: senderPeerId, progress: 1 });
+        peer.sendJSON({ type: 'transfer-cancelled' });
     }
 
     _onPeerLeft(peerId) {
@@ -787,7 +832,14 @@ class FileChunker {
         this._reader.readAsArrayBuffer(chunk);
     }
 
+    abort() {
+        this._aborted = true;
+        clearTimeout(this._waitRetry);
+        try { this._reader.abort(); } catch(e) {}
+    }
+
     _onChunkRead(chunk) {
+        if (this._aborted) return;
         this._offset += chunk.byteLength;
         this._partitionSize += chunk.byteLength;
         this._onChunk(chunk);
